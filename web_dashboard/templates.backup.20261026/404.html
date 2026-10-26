@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Not Found · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="error-page">
+  <h1>404</h1>
+  <p>The page you requested does not exist.</p>
+  <p><a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
+</div>
+{% endblock %}

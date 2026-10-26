@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="topnav">
+    <div class="topnav-inner">
+      <a class="brand" href="{{ url_for('dashboard') }}">{{ app_name }}</a>
+      <nav>
+        <a href="{{ url_for('dashboard') }}"
+           class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>
+        <a href="{{ url_for('history') }}"
+           class="{% if active == 'history' %}active{% endif %}">History</a>
+        <a href="{{ url_for('unknown_faces') }}"
+           class="{% if active == 'unknown' %}active{% endif %}">Unknown Faces</a>
+        <a href="{{ url_for('people') }}"
+           class="{% if active == 'people' %}active{% endif %}">People</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category|slug }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <p>Offline-first · Local network only · No cloud services</p>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

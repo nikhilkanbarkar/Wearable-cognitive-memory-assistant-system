@@ -2,10 +2,12 @@
 {% block title %}History · {{ app_name }}{% endblock %}
 
 {% block content %}
-<h1>Recognition History</h1>
-<p class="updated">{{ total }} event{{ "" if total == 1 else "s" }} · page {{ page }} of {{ total_pages }}</p>
+<div class="page-head">
+  <h1>Recognition History</h1>
+  <p class="updated">{{ total }} event{{ "" if total == 1 else "s" }} · page {{ page }} of {{ total_pages }}</p>
+</div>
 
-<form method="get" action="{{ url_for('history') }}" class="filters">
+<form method="get" action="{{ url_for('history') }}" class="filters" aria-label="Filter history">
   <div class="filter-field">
     <label for="f-search">Search person</label>
     <input id="f-search" type="text" name="search" value="{{ filters.search }}"
@@ -40,12 +42,12 @@
   <table class="data-table">
     <thead>
       <tr>
-        <th>ID</th>
-        <th>Time</th>
-        <th>Status</th>
-        <th>Person</th>
-        <th>Similarity</th>
-        <th>Image</th>
+        <th scope="col">ID</th>
+        <th scope="col">Time</th>
+        <th scope="col">Status</th>
+        <th scope="col">Person</th>
+        <th scope="col">Similarity</th>
+        <th scope="col">Image</th>
       </tr>
     </thead>
     <tbody>
@@ -83,6 +85,6 @@
   {% endif %}
 </nav>
 {% else %}
-<p class="empty">No events match these filters.</p>
+<p class="empty"><span class="empty-glyph" aria-hidden="true">✦</span>No events match these filters.</p>
 {% endif %}
 {% endblock %}

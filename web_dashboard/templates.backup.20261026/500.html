@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Server Error · {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="error-page">
+  <h1>500</h1>
+  <p>Something went wrong while rendering this page.</p>
+  <p>The recognition service on the Pi is unaffected. Try again, or check the
+     dashboard logs with <code>journalctl -u face-dashboard -n 50</code>.</p>
+  <p><a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
+</div>
+{% endblock %}

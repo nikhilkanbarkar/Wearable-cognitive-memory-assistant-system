@@ -1,0 +1,29 @@
+/* Cognitive Assist dashboard - minimal, offline, zero network calls.
+ *
+ * The only dynamic behaviour is a page-age indicator that helps the user
+ * judge how stale the displayed data is. No polling, no fetches, no
+ * timers that contact the server. Safe to run on a Raspberry Pi with
+ * limited resources. */
+
+(function () {
+  'use strict';
+
+  var startedAt = Date.now();
+  var el = document.getElementById('page-age');
+  if (!el) { return; }
+
+  function update() {
+    var secs = Math.floor((Date.now() - startedAt) / 1000);
+    if (secs < 5) { el.textContent = 'just now'; return; }
+    if (secs < 60) { el.textContent = secs + 's ago'; return; }
+    var m = Math.floor(secs / 60);
+    var s = secs % 60;
+    if (m < 60) { el.textContent = m + 'm ' + s + 's ago'; return; }
+    var h = Math.floor(m / 60);
+    m = m % 60;
+    el.textContent = h + 'h ' + m + 'm ago';
+  }
+
+  update();
+  setInterval(update, 1000);
+})();

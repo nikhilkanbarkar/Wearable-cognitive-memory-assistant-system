@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>Recognition Dashboard</h1>
+<p class="updated">Data loaded <span id="page-age">just now</span> ·
+  <a href="#" onclick="location.reload();return false;">Refresh</a>
+</p>
+
+<section class="cards" aria-label="Summary">
+  <div class="card">
+    <div class="card-label">Total attempts</div>
+    <div class="card-value">{{ stats.total }}</div>
+  </div>
+  <div class="card card-known">
+    <div class="card-label">Known</div>
+    <div class="card-value">{{ stats.known }}</div>
+  </div>
+  <div class="card card-unknown">
+    <div class="card-label">Unknown</div>
+    <div class="card-value">{{ stats.unknown }}</div>
+  </div>
+  <div class="card card-noface">
+    <div class="card-label">No face</div>
+    <div class="card-value">{{ stats.no_face }}</div>
+  </div>
+  <div class="card card-error">
+    <div class="card-label">Errors</div>
+    <div class="card-value">{{ stats.error }}</div>
+  </div>
+  <div class="card card-today">
+    <div class="card-label">Today</div>
+    <div class="card-value">{{ stats.today }}</div>
+  </div>
+</section>
+
+<section class="chart" aria-label="Known versus unknown">
+  <h2>Known vs Unknown</h2>
+  {% set ku_total = stats.known + stats.unknown %}
+  <div class="bar-row">
+    <span class="bar-label">Known</span>
+    <div class="bar-track">
+      <div class="bar-fill bar-fill-known"
+           style="width: {{ (stats.known / ku_total * 100) if ku_total else 0 }}%"></div>
+    </div>
+    <span class="bar-num">{{ stats.known }}</span>
+  </div>
+  <div class="bar-row">
+    <span class="bar-label">Unknown</span>
+    <div class="bar-track">
+      <div class="bar-fill bar-fill-unknown"
+           style="width: {{ (stats.unknown / ku_total * 100) if ku_total else 0 }}%"></div>
+    </div>
+    <span class="bar-num">{{ stats.unknown }}</span>
+  </div>
+</section>
+
+<section class="recent">
+  <h2>Recent events</h2>
+  {% if recent %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Time</th>
+        <th>Status</th>
+        <th>Person</th>
+        <th>Similarity</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in recent %}
+      <tr>
+        <td>{{ e.id }}</td>
+        <td>{{ e.timestamp | localtime }}</td>
+        <td><span class="badge badge-{{ e.status | slug }}">{{ e.status }}</span></td>
+        <td>{{ e.person_name | pretty_name }}</td>
+        <td>{{ e.similarity_score | score }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No recognition events yet. Press the button on the Pi to record one.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

@@ -2,34 +2,54 @@
 {% block title %}Dashboard · {{ app_name }}{% endblock %}
 
 {% block content %}
-<h1>Recognition Dashboard</h1>
-<p class="updated">Data loaded <span id="page-age">just now</span> ·
-  <a href="#" onclick="location.reload();return false;">Refresh</a>
-</p>
+<div class="page-head">
+  <h1>Recognition Dashboard</h1>
+  <p class="updated">Data loaded <span id="page-age">just now</span> ·
+    <a href="{{ url_for('dashboard') }}">Refresh</a>
+  </p>
+</div>
 
 <section class="cards" aria-label="Summary">
   <div class="card">
-    <div class="card-label">Total attempts</div>
+    <div class="card-head">
+      <div class="card-label">Total attempts</div>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+    </div>
     <div class="card-value">{{ stats.total }}</div>
   </div>
   <div class="card card-known">
-    <div class="card-label">Known</div>
+    <div class="card-head">
+      <div class="card-label">Known</div>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>
+    </div>
     <div class="card-value">{{ stats.known }}</div>
   </div>
   <div class="card card-unknown">
-    <div class="card-label">Unknown</div>
+    <div class="card-head">
+      <div class="card-label">Unknown</div>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7"/><path d="M12 17h.01"/></svg>
+    </div>
     <div class="card-value">{{ stats.unknown }}</div>
   </div>
   <div class="card card-noface">
-    <div class="card-label">No face</div>
+    <div class="card-head">
+      <div class="card-label">No face</div>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
+    </div>
     <div class="card-value">{{ stats.no_face }}</div>
   </div>
   <div class="card card-error">
-    <div class="card-label">Errors</div>
+    <div class="card-head">
+      <div class="card-label">Errors</div>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v5"/><path d="M12 18h.01"/></svg>
+    </div>
     <div class="card-value">{{ stats.error }}</div>
   </div>
   <div class="card card-today">
-    <div class="card-label">Today</div>
+    <div class="card-head">
+      <div class="card-label">Today</div>
+      <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+    </div>
     <div class="card-value">{{ stats.today }}</div>
   </div>
 </section>
@@ -58,14 +78,15 @@
 <section class="recent">
   <h2>Recent events</h2>
   {% if recent %}
+  <div class="table-wrap">
   <table class="data-table">
     <thead>
       <tr>
-        <th>ID</th>
-        <th>Time</th>
-        <th>Status</th>
-        <th>Person</th>
-        <th>Similarity</th>
+        <th scope="col">ID</th>
+        <th scope="col">Time</th>
+        <th scope="col">Status</th>
+        <th scope="col">Person</th>
+        <th scope="col">Similarity</th>
       </tr>
     </thead>
     <tbody>
@@ -80,9 +101,77 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
-  <p class="empty">No recognition events yet. Press the button on the Pi to record one.</p>
+  <p class="empty"><span class="empty-glyph" aria-hidden="true">✦</span>No recognition events yet. Press the button on the Pi to record one.</p>
   {% endif %}
+</section>
+
+<section class="about" aria-labelledby="about-title">
+  <h2 id="about-title">About Cognitive Assist</h2>
+  <div class="about-grid">
+    <div>
+      <p class="about-lead">A Raspberry Pi wearable that recognises faces entirely offline, speaks the result aloud, and logs every attempt to a local database that a caregiver can browse from any phone or laptop on the same Wi-Fi.</p>
+      <p>Each recognition is a single, deliberate button press, not continuous scanning. The wearer hears the person's name through Bluetooth earbuds, or a polite note that the face is not recognised, while the caregiver reviews the full history here.</p>
+      <p>Everything runs on the device. There is no cloud service, no internet dependency and no external API.</p>
+    </div>
+    <div class="about-side">
+      <h3>Use cases</h3>
+      <ul>
+        <li>Helping someone recall who they are talking to</li>
+        <li>Letting caregivers review recent encounters</li>
+        <li>Checking unfamiliar faces that were captured</li>
+      </ul>
+      <h3>Key technologies</h3>
+      <ul class="chips" aria-label="Key technologies">
+        <li class="chip">Raspberry Pi 4B</li>
+        <li class="chip">YuNet</li>
+        <li class="chip">ArcFace</li>
+        <li class="chip">Piper TTS</li>
+        <li class="chip">SQLite</li>
+        <li class="chip">Flask</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="how" aria-labelledby="how-title">
+  <h2 id="how-title">How it works</h2>
+  <ol class="steps">
+    <li class="step"><span class="step-title">Button press</span><span class="step-desc">One press starts one attempt.</span></li>
+    <li class="step"><span class="step-title">Camera capture</span><span class="step-desc">A short burst of frames is taken.</span></li>
+    <li class="step"><span class="step-title">Face detection</span><span class="step-desc">YuNet picks the best face.</span></li>
+    <li class="step"><span class="step-title">Face matching</span><span class="step-desc">ArcFace embedding compared with registered people.</span></li>
+    <li class="step"><span class="step-title">Audio / OLED feedback</span><span class="step-desc">Result is spoken and shown on the display.</span></li>
+    <li class="step"><span class="step-title">SQLite logging</span><span class="step-desc">Known, unknown, no-face and error events are saved.</span></li>
+    <li class="step"><span class="step-title">Caregiver dashboard</span><span class="step-desc">History is reviewed on this page.</span></li>
+  </ol>
+</section>
+
+<section class="capabilities" aria-labelledby="cap-title">
+  <h2 id="cap-title">Key capabilities</h2>
+  <div class="cap-grid">
+    <div class="cap">
+      <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/><path d="M3 3l18 18"/></svg>
+      <h3>Offline processing</h3>
+      <p>Detection, matching and speech all run on the Pi, with no internet connection needed.</p>
+    </div>
+    <div class="cap">
+      <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <h3>Private local storage</h3>
+      <p>Events, unknown-face images and embeddings stay on the device and are reachable only on the local network.</p>
+    </div>
+    <div class="cap">
+      <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 10v4h4l5 4V6L8 10H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg>
+      <h3>Spoken identification</h3>
+      <p>Names are announced through Bluetooth earbuds using offline text-to-speech.</p>
+    </div>
+    <div class="cap">
+      <svg class="cap-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+      <h3>Caregiver monitoring</h3>
+      <p>Review history, filter events and mark unknown faces as confirmed or dismissed.</p>
+    </div>
+  </div>
 </section>
 {% endblock %}
 
