@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Registered People · {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>Registered People</h1>
+<p class="updated">{{ people|length }} person{{ "" if people|length == 1 else "s" }} in the mirror table</p>
+
+{% if people %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Known recognitions</th>
+        <th>Total events linked</th>
+        <th>Added to mirror</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in people %}
+      <tr>
+        <td>{{ p.id }}</td>
+        <td>{{ p.name | pretty_name }}</td>
+        <td>{{ p.known_count or 0 }}</td>
+        <td>{{ p.total_events or 0 }}</td>
+        <td>{{ p.created_at | localtime }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">
+  The people mirror is empty. Run
+  <code>python database_setup.py --resync-people</code>
+  to populate it from <code>Embeddings/metadata_clean.csv</code>.
+</p>
+{% endif %}
+{% endblock %}

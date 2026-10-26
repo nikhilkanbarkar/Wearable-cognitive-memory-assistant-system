@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+oled_env/
+
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Runtime data and personal/biometric information
+/database/*.db
+/database/*.db-*
+/logs/unknown_faces/
+/unknown_embeddings/
+/Embeddings/
+
+# Model weights (large binary files; provide separately when deploying)
+/models/
+
+# Generated reports and audio cache
+/outputs/
+/voices/cache/
+
+# Test and tool caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

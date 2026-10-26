@@ -1,0 +1,35 @@
+# Raspberry Pi 4B / Debian 13 (Trixie) / aarch64 / Python 3.13
+# Runtime dependencies for the YuNet + InsightFace/ArcFace face-recognition script.
+#
+# Install with:
+#   source .venv/bin/activate
+#   python -m pip install -r requirements-pi.txt
+#
+# Notes:
+# - NumPy 2.2.6 satisfies OpenCV 4.12's Python >=3.9 constraint (NumPy <2.3).
+# - InsightFace 0.7.3 is distributed as source and may need native build tools.
+# - pyttsx3 also needs OS-level speech packages; see setup instructions.
+
+numpy==2.2.6
+opencv-python==4.12.0.88
+onnxruntime==1.30.0
+onnx==1.19.0
+scipy==1.16.2
+insightface==0.7.3
+pyttsx3==2.99
+
+# Dependencies used by InsightFace and its model/tooling.
+# Pinned to versions with Python 3.13-compatible releases where available.
+scikit-learn
+scikit-image
+easydict
+prettytable
+albumentations
+requests
+Pillow
+matplotlib
+tqdm
+Cython
+
+# Web dashboard (pure-Python wheels; only new dependency).
+Flask==3.1.0

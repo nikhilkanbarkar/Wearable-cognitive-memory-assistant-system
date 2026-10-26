@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Unknown Face #{{ event.id }} · {{ app_name }}{% endblock %}
+
+{% block content %}
+<p><a href="{{ url_for('unknown_faces') }}">← Back to unknown faces</a></p>
+<h1>Unknown Face #{{ event.id }}</h1>
+
+<div class="detail">
+  <div class="detail-image-wrap">
+    {% if has_image %}
+    <img class="detail-image" src="{{ url_for('unknown_image', event_id=event.id) }}"
+         alt="Unknown face #{{ event.id }}" width="224" height="224">
+    {% else %}
+    <div class="detail-image-placeholder">image not saved</div>
+    {% endif %}
+  </div>
+
+  <div class="detail-meta">
+    <dl>
+      <dt>Captured</dt><dd>{{ event.timestamp | localtime }}</dd>
+      <dt>Status</dt><dd><span class="badge badge-unknown">UNKNOWN</span></dd>
+      <dt>Similarity</dt><dd>{{ event.similarity_score | score }}</dd>
+      <dt>Review status</dt><dd><span class="review-tag review-{{ (event.review_status or 'pending') | slug }}">{{ event.review_status or "PENDING" }}</span></dd>
+      <dt>Image path</dt><dd class="mono">{{ event.image_path or "—" }}</dd>
+      <dt>Embedding path</dt><dd class="mono">{{ event.embedding_path or "—" }}</dd>
+    </dl>
+
+    <h2>Review</h2>
+    <p class="dim">Marking an event does not enrol it in the face database.</p>
+    <div class="review-actions">
+      <form method="post" action="{{ url_for('unknown_review', event_id=event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="new_status" value="CONFIRMED">
+        <button type="submit" class="btn btn-known">Mark confirmed</button>
+      </form>
+      <form method="post" action="{{ url_for('unknown_review', event_id=event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="new_status" value="DISMISSED">
+        <button type="submit" class="btn btn-secondary">Dismiss</button>
+      </form>
+      <form method="post" action="{{ url_for('unknown_review', event_id=event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="new_status" value="PENDING">
+        <button type="submit" class="btn btn-secondary">Reset to pending</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

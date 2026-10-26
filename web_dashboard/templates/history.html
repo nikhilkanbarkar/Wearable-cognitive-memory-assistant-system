@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}History · {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>Recognition History</h1>
+<p class="updated">{{ total }} event{{ "" if total == 1 else "s" }} · page {{ page }} of {{ total_pages }}</p>
+
+<form method="get" action="{{ url_for('history') }}" class="filters">
+  <div class="filter-field">
+    <label for="f-search">Search person</label>
+    <input id="f-search" type="text" name="search" value="{{ filters.search }}"
+           placeholder="name, part of name, or event ID" autocomplete="off">
+  </div>
+  <div class="filter-field">
+    <label for="f-status">Status</label>
+    <select id="f-status" name="status">
+      <option value="">All</option>
+      {% for s in ("KNOWN", "UNKNOWN", "NO_FACE", "ERROR") %}
+      <option value="{{ s }}" {% if filters.status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label for="f-start">From</label>
+    <input id="f-start" type="date" name="start_date" value="{{ filters.start_date }}">
+  </div>
+  <div class="filter-field">
+    <label for="f-end">To</label>
+    <input id="f-end" type="date" name="end_date" value="{{ filters.end_date }}">
+  </div>
+  <div class="filter-actions">
+    <button type="submit" class="btn">Apply filters</button>
+    <a class="btn btn-secondary" href="{{ url_for('history') }}">Reset</a>
+    <a class="btn btn-secondary" href="{{ url_for('history_export', **filters) }}">Export CSV</a>
+  </div>
+</form>
+
+{% if events %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Time</th>
+        <th>Status</th>
+        <th>Person</th>
+        <th>Similarity</th>
+        <th>Image</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr>
+        <td>{{ e.id }}</td>
+        <td>{{ e.timestamp | localtime }}</td>
+        <td><span class="badge badge-{{ e.status | slug }}">{{ e.status }}</span></td>
+        <td>{{ e.person_name | pretty_name }}</td>
+        <td>{{ e.similarity_score | score }}</td>
+        <td>
+          {% if e.image_path and e.status == "UNKNOWN" %}
+          <a href="{{ url_for('unknown_detail', event_id=e.id) }}">view</a>
+          {% else %}
+          <span class="dim">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<nav class="pagination" aria-label="Pagination">
+  {% if page > 1 %}
+  <a class="btn btn-secondary" href="{{ url_for('history', page=page-1, **filters) }}">← Prev</a>
+  {% else %}
+  <span class="btn btn-secondary disabled">← Prev</span>
+  {% endif %}
+  <span class="page-info">{{ page }} / {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a class="btn btn-secondary" href="{{ url_for('history', page=page+1, **filters) }}">Next →</a>
+  {% else %}
+  <span class="btn btn-secondary disabled">Next →</span>
+  {% endif %}
+</nav>
+{% else %}
+<p class="empty">No events match these filters.</p>
+{% endif %}
+{% endblock %}

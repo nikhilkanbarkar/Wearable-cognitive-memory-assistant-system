@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Unknown Faces · {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>Unknown Faces</h1>
+<p class="updated">{{ total }} recorded · page {{ page }} of {{ total_pages }}</p>
+
+<form method="get" action="{{ url_for('unknown_faces') }}" class="filters filters-inline">
+  <div class="filter-field">
+    <label for="f-review">Review status</label>
+    <select id="f-review" name="review_status">
+      <option value="">All</option>
+      {% for s in ("PENDING", "CONFIRMED", "DISMISSED") %}
+      <option value="{{ s }}" {% if filters.review_status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-actions">
+    <button type="submit" class="btn">Apply</button>
+    <a class="btn btn-secondary" href="{{ url_for('unknown_faces') }}">Reset</a>
+  </div>
+</form>
+
+{% if events %}
+<div class="gallery">
+  {% for e in events %}
+  <a class="gallery-item" href="{{ url_for('unknown_detail', event_id=e.id) }}">
+    <img src="{{ url_for('unknown_image', event_id=e.id) }}"
+         alt="Unknown face #{{ e.id }}" loading="lazy" width="112" height="112">
+    <div class="gallery-meta">
+      <div class="gallery-id">#{{ e.id }}</div>
+      <div class="gallery-time">{{ e.timestamp | localtime }}</div>
+      <div class="gallery-sub">
+        sim {{ e.similarity_score | score }} ·
+        <span class="review-tag review-{{ (e.review_status or 'pending') | slug }}">{{ e.review_status or "PENDING" }}</span>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+<nav class="pagination" aria-label="Pagination">
+  {% if page > 1 %}
+  <a class="btn btn-secondary" href="{{ url_for('unknown_faces', page=page-1, **filters) }}">← Prev</a>
+  {% else %}
+  <span class="btn btn-secondary disabled">← Prev</span>
+  {% endif %}
+  <span class="page-info">{{ page }} / {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a class="btn btn-secondary" href="{{ url_for('unknown_faces', page=page+1, **filters) }}">Next →</a>
+  {% else %}
+  <span class="btn btn-secondary disabled">Next →</span>
+  {% endif %}
+</nav>
+{% else %}
+<p class="empty">No unknown faces recorded yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,39 @@
+# face-dashboard.service - optional, not enabled by default.
+#
+# Install once:
+#   sudo cp face-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#
+# Start / stop manually:
+#   sudo systemctl start face-dashboard
+#   sudo systemctl stop face-dashboard
+#
+# Do NOT run `systemctl enable face-dashboard`. It is stopped by default.
+#
+# ExecStart points at the venv that already runs face-recognition.service.
+# Verified against: `systemctl status face-recognition` -> /home/pi/FaceRecognitionSystem/.venv/bin/python
+
+[Unit]
+Description=Cognitive Assist web dashboard (offline, LAN-only)
+Documentation=file:///home/pi/FaceRecognitionSystem2/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/FaceRecognitionSystem2
+ExecStart=/home/pi/FaceRecognitionSystem/.venv/bin/python -m web_dashboard.app
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=face-dashboard
+
+[Install]
+WantedBy=multi-user.target
