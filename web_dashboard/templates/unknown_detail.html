@@ -1,62 +1,49 @@
 {% extends "base.html" %}
-{% block title %}Unknown Faces · {{ app_name }}{% endblock %}
+{% block title %}Unknown Face #{{ event.id }} · {{ app_name }}{% endblock %}
 
 {% block content %}
-<div class="page-head">
-  <h1>Unknown Faces</h1>
-  <p class="updated">{{ total }} recorded · page {{ page }} of {{ total_pages }}</p>
-</div>
+<p><a href="{{ url_for('unknown_faces') }}">← Back to unknown faces</a></p>
+<h1>Unknown Face #{{ event.id }}</h1>
 
-<form method="get" action="{{ url_for('unknown_faces') }}" class="filters filters-inline" aria-label="Filter unknown faces">
-  <div class="filter-field">
-    <label for="f-review">Review status</label>
-    <select id="f-review" name="review_status">
-      <option value="">All</option>
-      {% for s in ("PENDING", "CONFIRMED", "DISMISSED") %}
-      <option value="{{ s }}" {% if filters.review_status == s %}selected{% endif %}>{{ s }}</option>
-      {% endfor %}
-    </select>
+<div class="detail">
+  <div class="detail-image-wrap">
+    {% if has_image %}
+    <img class="detail-image" src="{{ url_for('unknown_image', event_id=event.id) }}"
+         alt="Unknown face #{{ event.id }}" width="224" height="224">
+    {% else %}
+    <div class="detail-image-placeholder">image not saved</div>
+    {% endif %}
   </div>
-  <div class="filter-actions">
-    <button type="submit" class="btn">Apply</button>
-    <a class="btn btn-secondary" href="{{ url_for('unknown_faces') }}">Reset</a>
+
+  <div class="detail-meta">
+    <dl>
+      <dt>Captured</dt><dd>{{ event.timestamp | localtime }}</dd>
+      <dt>Status</dt><dd><span class="badge badge-unknown">UNKNOWN</span></dd>
+      <dt>Similarity</dt><dd>{{ event.similarity_score | score }}</dd>
+      <dt>Review status</dt><dd><span class="review-tag review-{{ (event.review_status or 'pending') | slug }}">{{ event.review_status or "PENDING" }}</span></dd>
+      <dt>Image path</dt><dd class="mono">{{ event.image_path or "—" }}</dd>
+      <dt>Embedding path</dt><dd class="mono">{{ event.embedding_path or "—" }}</dd>
+    </dl>
+
+    <h2>Review</h2>
+    <p class="dim">Marking an event does not enrol it in the face database.</p>
+    <div class="review-actions">
+      <form method="post" action="{{ url_for('unknown_review', event_id=event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="new_status" value="CONFIRMED">
+        <button type="submit" class="btn btn-known">Mark confirmed</button>
+      </form>
+      <form method="post" action="{{ url_for('unknown_review', event_id=event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="new_status" value="DISMISSED">
+        <button type="submit" class="btn btn-secondary">Dismiss</button>
+      </form>
+      <form method="post" action="{{ url_for('unknown_review', event_id=event.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="new_status" value="PENDING">
+        <button type="submit" class="btn btn-secondary">Reset to pending</button>
+      </form>
+    </div>
   </div>
-</form>
-
-{% if events %}
-<div class="gallery">
-  {% for e in events %}
-  <a class="gallery-item" href="{{ url_for('unknown_detail', event_id=e.id) }}">
-    <div class="gallery-thumb">
-      <img src="{{ url_for('unknown_image', event_id=e.id) }}"
-           alt="Unknown face #{{ e.id }}" loading="lazy" width="112" height="112">
-    </div>
-    <div class="gallery-meta">
-      <div class="gallery-id">#{{ e.id }}</div>
-      <div class="gallery-time">{{ e.timestamp | localtime }}</div>
-      <div class="gallery-sub">
-        sim {{ e.similarity_score | score }} ·
-        <span class="review-tag review-{{ (e.review_status or 'pending') | slug }}">{{ e.review_status or "PENDING" }}</span>
-      </div>
-    </div>
-  </a>
-  {% endfor %}
 </div>
-
-<nav class="pagination" aria-label="Pagination">
-  {% if page > 1 %}
-  <a class="btn btn-secondary" href="{{ url_for('unknown_faces', page=page-1, **filters) }}">← Prev</a>
-  {% else %}
-  <span class="btn btn-secondary disabled">← Prev</span>
-  {% endif %}
-  <span class="page-info">{{ page }} / {{ total_pages }}</span>
-  {% if page < total_pages %}
-  <a class="btn btn-secondary" href="{{ url_for('unknown_faces', page=page+1, **filters) }}">Next →</a>
-  {% else %}
-  <span class="btn btn-secondary disabled">Next →</span>
-  {% endif %}
-</nav>
-{% else %}
-<p class="empty"><span class="empty-glyph" aria-hidden="true">✦</span>No unknown faces recorded yet.</p>
-{% endif %}
 {% endblock %}
