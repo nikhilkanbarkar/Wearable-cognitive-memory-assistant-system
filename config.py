@@ -77,6 +77,13 @@ UNKNOWN_EMBEDDINGS_DIR = ROOT / "unknown_embeddings"
 DB_BUSY_TIMEOUT_MS = 5000
 
 
+# ------------------------------ PERSON PROFILES (ADDED) ------------------------------
+
+# CSV mapping person names (from metadata_clean.csv) to relationship,
+# pronoun, and custom spoken message. Reloaded automatically when edited.
+PERSON_INFO_FILE = ROOT / "person_info.csv"
+
+
 # ------------------------------ DASHBOARD (ADDED) ------------------------------
 
 DASHBOARD_HOST = "0.0.0.0"

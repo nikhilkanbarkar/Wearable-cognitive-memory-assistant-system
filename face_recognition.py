@@ -57,6 +57,8 @@ from bluetooth_audio import (
 
 from recognition_logger import RecognitionLogger
 
+from person_info import PersonInfoStore
+
 try:
     from oled_display import OLEDStatusDisplay
 except Exception:
@@ -175,6 +177,7 @@ def process_scan(
     db_labels,
     display,
     recognition_logger=None,
+    person_store=None,
 ):
     """Capture the best face, recognize it, and announce the result.
 
@@ -264,7 +267,19 @@ def process_scan(
                 except Exception as log_exc:
                     print(f"[LOGGER] log_known failed: {log_exc}")
 
-            announce(f"{spoken_name} detected")
+            # Build the full announcement (relationship + message) if a
+            # person profile is available; otherwise fall back to the
+            # original name-only sentence.
+            if person_store is not None:
+                try:
+                    announcement = person_store.build_announcement(name)
+                except Exception as exc:
+                    print(f"[CONTACTS] Build failed: {exc}")
+                    announcement = f"{spoken_name} detected."
+            else:
+                announcement = f"{spoken_name} detected."
+
+            announce(announcement)
 
             if display is not None:
                 try:
@@ -344,6 +359,7 @@ def main():
     speech_thread = None
     button_handler = None
     recognition_logger = None
+    person_store = None
 
     def stop_handler(signum, frame):
         stop_event.set()
@@ -387,6 +403,18 @@ def main():
                 f"event logging: {exc}"
             )
             recognition_logger = None
+
+        # Load person profiles (relationship + message) for spoken
+        # announcements. A missing file or bad CSV is not fatal:
+        # announcements fall back to "<Name> detected."
+        try:
+            person_store = PersonInfoStore(cfg.PERSON_INFO_FILE)
+        except Exception as exc:
+            print(
+                "[CONTACTS] Init failed; only names will be spoken: "
+                f"{exc}"
+            )
+            person_store = None
 
         # Initialize YuNet.
         print("[MODEL] Loading YuNet...")
@@ -465,6 +493,7 @@ def main():
                     db_labels,
                     display,
                     recognition_logger=recognition_logger,
+                    person_store=person_store,
                 )
 
             finally:
