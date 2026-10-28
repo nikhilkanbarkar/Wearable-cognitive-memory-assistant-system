@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""Flask web dashboard for the Cognitive Assist face recognition system.
-
-Run with:
-
-    python -m web_dashboard.app
-
-This module reads the SQLite database written by recognition_logger.py.
-It does not import cv2, insightface, or any face-recognition model, and it
-never opens the camera. The dashboard runs in its own process, so stopping
-it has no effect on the recognition service.
-
-Optional HTTP basic auth is enabled by setting both environment variables
-DASHBOARD_USER and DASHBOARD_PASSWORD before starting the app. Off by
-default, because the dashboard is intended for LAN-only access from an
-already-trusted device.
-
-CSRF protection is ON by default for state-changing requests (currently
-only /unknown/<id>/review POST). It can be disabled for tests via the
-CSRF_ENABLED config override.
-"""
+"""Flask web dashboard for the Cognitive Assist face recognition system."""
 
 from __future__ import annotations
 
@@ -26,6 +7,7 @@ import base64
 import csv
 import io
 import secrets
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -365,6 +347,58 @@ def create_app(config_overrides: dict | None = None) -> Flask:
             active="people",
             people=rows,
         )
+
+    # ------------------------------------------------------ scheduler
+
+    @app.route("/schedule")
+    def schedule():
+        messages = queries.get_scheduled_messages(db_path())
+        return render_template(
+            "schedule.html",
+            active="schedule",
+            messages=messages,
+        )
+
+    @app.route("/schedule", methods=["POST"])
+    def schedule_add():
+        # Check internet connection first
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+        except OSError:
+            flash("Cannot schedule: Internet connection required for accurate timekeeping.", "error")
+            return redirect(url_for("schedule"))
+
+        time_str = request.form.get("scheduled_time")
+        message = request.form.get("message", "").strip()
+
+        if not time_str or not message:
+            flash("Time and message are required.", "error")
+            return redirect(url_for("schedule"))
+
+        try:
+            # HTML datetime-local gives us "2026-10-27T15:30"
+            dt_local = datetime.strptime(time_str, "%Y-%m-%dT%H:%M")
+            # Attach local timezone and convert to UTC
+            dt_utc = dt_local.astimezone().astimezone(timezone.utc)
+            utc_iso = dt_utc.isoformat(timespec="milliseconds")
+        except ValueError:
+            flash("Invalid date/time format.", "error")
+            return redirect(url_for("schedule"))
+
+        if queries.add_scheduled_message(utc_iso, message, db_path()):
+            flash("Message scheduled successfully.", "info")
+        else:
+            flash("Failed to schedule message.", "error")
+            
+        return redirect(url_for("schedule"))
+
+    @app.route("/schedule/<int:msg_id>/cancel", methods=["POST"])
+    def schedule_cancel(msg_id):
+        if queries.cancel_scheduled_message(msg_id, db_path()):
+            flash(f"Message #{msg_id} cancelled.", "info")
+        else:
+            flash(f"Could not cancel message #{msg_id}.", "error")
+        return redirect(url_for("schedule"))
 
     # -------------------------------------------------- error handlers
 

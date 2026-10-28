@@ -17,8 +17,11 @@ import config as cfg
 
 import queue
 import signal
+import sqlite3
+import socket
 import threading
 import time
+from datetime import datetime, timezone
 
 import cv2
 import numpy as np
@@ -68,7 +71,7 @@ except Exception:
 # --------------------------- GLOBAL EVENTS ---------------------------
 
 # Audio queue is retained. There is no button-event queue.
-speech_queue = queue.Queue(maxsize=4)
+speech_queue = queue.Queue(maxsize=6)
 
 stop_event = threading.Event()
 scan_requested = threading.Event()
@@ -123,6 +126,64 @@ def announce(message):
 
     except queue.Full:
         print("[AUDIO] Speech queue full; announcement skipped.")
+
+
+# -------------------------- SCHEDULER --------------------------------
+
+def scheduler_worker():
+    """Background thread that checks for scheduled messages in the DB."""
+    db_path = cfg.DATABASE_PATH
+    timeout = cfg.DB_BUSY_TIMEOUT_MS / 1000.0
+
+    while not stop_event.is_set():
+        # Interruptible sleep (checks every 15 seconds)
+        if stop_event.wait(15):
+            break
+
+        # Verify internet connection to ensure system clock is synced
+        try:
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+        except OSError:
+            print("[SCHEDULER] No internet connection. Waiting to sync time before executing tasks...")
+            continue
+
+        now_utc = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=timeout)
+            conn.row_factory = sqlite3.Row
+            conn.execute(f"PRAGMA busy_timeout={cfg.DB_BUSY_TIMEOUT_MS}")
+
+            # Find pending tasks that are due
+            rows = conn.execute(
+                "SELECT id, message FROM scheduled_messages "
+                "WHERE status = 'PENDING' AND scheduled_time <= ? "
+                "ORDER BY scheduled_time ASC",
+                (now_utc,)
+            ).fetchall()
+
+            for row in rows:
+                # Atomically claim the task so it doesn't double-play
+                cur = conn.execute(
+                    "UPDATE scheduled_messages SET status = 'COMPLETED', executed_at = ? "
+                    "WHERE id = ? AND status = 'PENDING'",
+                    (now_utc, row["id"])
+                )
+                conn.commit()
+
+                if cur.rowcount > 0:
+                    msg = row["message"]
+                    print(f"[SCHEDULER] Executing task #{row['id']}: {msg}")
+                    
+                    # Play the message twice
+                    announce(msg)
+                    time.sleep(2)  # 2-second pause between plays
+                    announce(msg)
+
+            conn.close()
+
+        except Exception as exc:
+            print(f"[SCHEDULER] Error checking schedule: {exc}")
 
 
 # ----------------------------- OLED ----------------------------------
@@ -357,6 +418,7 @@ def main():
     camera = None
     display = None
     speech_thread = None
+    scheduler_thread = None
     button_handler = None
     recognition_logger = None
     person_store = None
@@ -434,7 +496,12 @@ def main():
         arcface = create_arcface()
 
         # Open and verify the camera.
-        camera = open_camera()
+        try:
+            camera = open_camera()
+        except Exception as exc:
+            print(f"[CAMERA] Init failed: {exc}")
+            print("[CAMERA] Continuing without camera. Scanning will be disabled.")
+            camera = None
 
         # Start audio independently of recognition.
         speech_thread = threading.Thread(
@@ -444,6 +511,15 @@ def main():
         )
 
         speech_thread.start()
+
+        # Start the background scheduler thread.
+        scheduler_thread = threading.Thread(
+            target=scheduler_worker,
+            name="scheduler-worker",
+            daemon=True,
+        )
+        scheduler_thread.start()
+        print("[SCHEDULER] Background task thread active.")
 
         # Start the event-driven GPIO button handler.
         button_handler = ButtonHandler(
@@ -481,6 +557,12 @@ def main():
 
             if stop_event.is_set():
                 break
+
+            if camera is None:
+                print("[BUTTON] Camera unavailable; cannot scan.")
+                announce("Camera is not connected.")
+                button_handler.finish_scan()
+                continue
 
             print("[BUTTON] Press accepted. Starting scan.")
 

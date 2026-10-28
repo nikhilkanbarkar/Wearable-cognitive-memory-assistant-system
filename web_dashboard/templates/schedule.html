@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Scheduler · {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>Scheduled Messages</h1>
+<p class="updated">Create custom audio reminders that play on the Pi's Bluetooth earbuds.</p>
+
+<div class="detail" style="margin-bottom: 2rem; grid-template-columns: 1fr;">
+  <div class="detail-meta">
+    <h2>Create New Task</h2>
+    <form method="post" action="{{ url_for('schedule_add') }}" style="display: flex; flex-direction: column; gap: 1rem;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      
+      <div class="filter-field">
+        <label for="sched-time">When should it play?</label>
+        <input type="datetime-local" id="sched-time" name="scheduled_time" required>
+      </div>
+
+      <div class="filter-field">
+        <label for="sched-msg">What should it say?</label>
+        <textarea id="sched-msg" name="message" rows="3" required placeholder="E.g., Time to take your afternoon medication." class="filter-field" style="resize: vertical;"></textarea>
+      </div>
+
+      <div>
+        <button type="submit" class="btn">Schedule Message</button>
+        <span class="dim" style="margin-left: 1rem; font-size: 0.9em;">Note: Messages play twice to ensure you hear them.</span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<h2>Task History</h2>
+{% if messages %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Scheduled Time</th>
+        <th>Message</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for msg in messages %}
+      <tr>
+        <td>{{ msg.id }}</td>
+        <td>{{ msg.scheduled_time | localtime }}</td>
+        <td>{{ msg.message }}</td>
+        <td>
+          {% if msg.status == 'PENDING' %}
+            <span class="badge badge-unknown">PENDING</span>
+          {% elif msg.status == 'COMPLETED' %}
+            <span class="badge badge-known">COMPLETED</span>
+          {% else %}
+            <span class="badge badge-no-face">CANCELLED</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if msg.status == 'PENDING' %}
+          <form method="post" action="{{ url_for('schedule_cancel', msg_id=msg.id) }}" style="margin: 0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">Cancel</button>
+          </form>
+          {% else %}
+          <span class="dim">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">No messages scheduled yet.</p>
+{% endif %}
+{% endblock %}

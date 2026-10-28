@@ -23,15 +23,13 @@
         </svg>
         <span>{{ app_name }}</span>
       </a>
-      <nav aria-label="Primary navigation">
-        <a href="{{ url_for('dashboard') }}"
-           class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>
-        <a href="{{ url_for('history') }}"
-           class="{% if active == 'history' %}active{% endif %}">History</a>
-        <a href="{{ url_for('unknown_faces') }}"
-           class="{% if active == 'unknown' %}active{% endif %}">Unknown Faces</a>
-        <a href="{{ url_for('people') }}"
-           class="{% if active == 'people' %}active{% endif %}">People</a>
+      <nav>
+        <a href="{{ url_for('dashboard') }}" class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>
+        <a href="{{ url_for('history') }}" class="{% if active == 'history' %}active{% endif %}">History</a>
+        <a href="{{ url_for('unknown_faces') }}" class="{% if active == 'unknown' %}active{% endif %}">Unknown Faces</a>
+        <a href="{{ url_for('people') }}" class="{% if active == 'people' %}active{% endif %}">People</a>
+        <!-- ADD THIS LINE -->
+        <a href="{{ url_for('schedule') }}" class="{% if active == 'schedule' %}active{% endif %}">Schedule</a>
       </nav>
     </div>
   </header>

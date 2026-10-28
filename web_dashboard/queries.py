@@ -367,3 +367,57 @@ def get_people_with_counts(db_path: Optional[Path] = None) -> list[dict]:
         except sqlite3.Error:
             return []
         return [dict(r) for r in rows]
+
+
+# -------------------------------------------------------- scheduled tasks
+
+def add_scheduled_message(scheduled_time_utc: str, message: str, db_path: Optional[Path] = None) -> bool:
+    path = Path(db_path) if db_path else Path(wcfg.DATABASE_PATH)
+    if not path.is_file():
+        return False
+    conn = sqlite3.connect(str(path), timeout=wcfg.DB_BUSY_TIMEOUT_MS / 1000.0)
+    try:
+        conn.execute(f"PRAGMA busy_timeout={int(wcfg.DB_BUSY_TIMEOUT_MS)}")
+        conn.execute(
+            "INSERT INTO scheduled_messages (scheduled_time, message, created_at) VALUES (?, ?, ?)",
+            (scheduled_time_utc, message, datetime.now(timezone.utc).isoformat(timespec="milliseconds")),
+        )
+        conn.commit()
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+
+def get_scheduled_messages(db_path: Optional[Path] = None) -> list[dict]:
+    with _db(db_path) as conn:
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT id, scheduled_time, message, status, created_at, executed_at "
+                "FROM scheduled_messages ORDER BY scheduled_time DESC"
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [dict(r) for r in rows]
+
+
+def cancel_scheduled_message(msg_id: int, db_path: Optional[Path] = None) -> bool:
+    path = Path(db_path) if db_path else Path(wcfg.DATABASE_PATH)
+    if not path.is_file():
+        return False
+    conn = sqlite3.connect(str(path), timeout=wcfg.DB_BUSY_TIMEOUT_MS / 1000.0)
+    try:
+        conn.execute(f"PRAGMA busy_timeout={int(wcfg.DB_BUSY_TIMEOUT_MS)}")
+        cur = conn.execute(
+            "UPDATE scheduled_messages SET status = 'CANCELLED' WHERE id = ? AND status = 'PENDING'",
+            (msg_id,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()

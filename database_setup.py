@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS recognition_events (
     FOREIGN KEY (person_id) REFERENCES people(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheduled_time TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','COMPLETED','CANCELLED')),
+    created_at TEXT NOT NULL,
+    executed_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_timestamp
     ON recognition_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_events_status
@@ -56,6 +65,10 @@ CREATE INDEX IF NOT EXISTS idx_events_person_id
     ON recognition_events(person_id);
 CREATE INDEX IF NOT EXISTS idx_events_review_status
     ON recognition_events(review_status) WHERE review_status IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_scheduled_time
+    ON scheduled_messages(scheduled_time);
+CREATE INDEX IF NOT EXISTS idx_scheduled_status
+    ON scheduled_messages(status);
 """
 
 REQUIRED_EVENT_COLUMNS = {
@@ -64,6 +77,7 @@ REQUIRED_EVENT_COLUMNS = {
     "review_status", "error_message",
 }
 REQUIRED_PEOPLE_COLUMNS = {"id", "name", "created_at"}
+REQUIRED_SCHEDULE_COLUMNS = {"id", "scheduled_time", "message", "status", "created_at", "executed_at"}
 
 
 def _connect(db_path: Path, busy_timeout_ms: int) -> sqlite3.Connection:
@@ -121,6 +135,14 @@ def verify_schema(db_path: Path, busy_timeout_ms: int) -> None:
         missing = REQUIRED_PEOPLE_COLUMNS - people_cols
         if missing:
             raise RuntimeError(f"people missing columns: {sorted(missing)}")
+            
+        sched_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(scheduled_messages)").fetchall()
+        }
+        missing = REQUIRED_SCHEDULE_COLUMNS - sched_cols
+        if missing:
+            raise RuntimeError(f"scheduled_messages missing columns: {sorted(missing)}")
     finally:
         conn.close()
 
