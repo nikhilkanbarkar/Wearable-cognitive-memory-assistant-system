@@ -1,1205 +1,1020 @@
-# 📘 Cognitive Assist — Operations Manual
+# Cognitive Assist — Operations & Code Manual
 
-> Everything you need to run, troubleshoot, and maintain the system.
-> If `README.md` gets you started, `MANUAL.md` keeps you running.
-
-**Table of contents**
-
-1. [System architecture](#1-system-architecture)
-2. [Component reference](#2-component-reference)
-3. [Database schema](#3-database-schema)
-4. [Service management](#4-service-management)
-5. [Log viewing](#5-log-viewing)
-6. [Backup and restore](#6-backup-and-restore)
-7. [Database inspection](#7-database-inspection)
-8. [Adding a new person](#8-adding-a-new-person)
-9. [Reviewing unknown faces](#9-reviewing-unknown-faces)
-10. [Exporting data](#10-exporting-data)
-11. [Accessing the dashboard](#11-accessing-the-dashboard)
-12. [Troubleshooting](#12-troubleshooting)
-13. [Security](#13-security)
-14. [Maintenance schedule](#14-maintenance-schedule)
-15. [FAQ](#15-faq)
+This manual explains environment setup, execution commands, database management, systemd services, dashboard usage, scheduler operation, and troubleshooting.
 
 ---
 
-## 1. System architecture
+## 1. Environment Setup
 
-### 1.1 Two services, one database
+### 1.1 Navigate to the Project Directory
 
-```mermaid
-flowchart LR
-    subgraph Pi["🍓 Raspberry Pi (always on)"]
-        direction TB
-        subgraph S1["face-recognition.service"]
-            R1[Button handler]
-            R2[Camera capture]
-            R3[YuNet + ArcFace]
-            R4[RecognitionLogger]
-            R5[OLED + BT audio]
-        end
-        
-        subgraph DB["💾 SQLite"]
-            DB1[(recognition.db)]
-        end
-        
-        subgraph S2["face-dashboard.service"]
-            D1[Flask routes]
-            D2[Queries]
-            D3[Templates]
-        end
-        
-        R4 -->|write| DB1
-        DB1 -->|read| D2
-    end
-    
-    subgraph LAN["📶 Local WiFi"]
-        L1[👨‍👩‍👧 Caregiver laptop/phone]
-    end
-    
-    D3 -->|HTML| L1
-    
-    style Pi fill:#171c22,color:#e6ecf3
-    style DB fill:#f0b72f,color:#000
-    style LAN fill:#4e9bff,color:#fff
-```
-
-
-**Key guarantees:**
-
-| **Property**                             | **Why it matters**                     |
-| :--------------------------------------- | :------------------------------------- |
-| The services share only the SQLite file  | Stopping one never stops the other     |
-| Dashboard never opens the camera         | No CPU contention                      |
-| Dashboard never loads a model            | Saves \~50–80 MB RAM                   |
-| WAL mode + busy_timeout                  | Logger can write while dashboard reads |
-| Dashboard is read-only except one UPDATE | Cannot corrupt recognition data        |
-
-### 1.2 Button press sequence
-
-```
-sequenceDiagram
-    participant U as 👆 User
-    participant G as GPIO
-    participant FR as face_recognition
-    participant CAM as Camera
-    participant M as Models
-    participant LOG as Logger
-    participant DB as SQLite
-    participant UI as OLED/Audio
-    
-    U->>G: press button
-    G->>FR: scan_requested event
-    FR->>UI: "SCANNING"
-    FR->>CAM: capture 1s burst
-    CAM-->>FR: best frame + landmarks
-    alt no face detected
-        FR->>LOG: log_no_face()
-        LOG->>DB: INSERT NO_FACE
-        FR->>UI: "No face detected"
-    else face detected
-        FR->>M: YuNet → landmarks
-        FR->>M: ArcFace → 512-d embedding
-        M-->>FR: embedding vector
-        FR->>FR: compare vs 470 registered
-        alt similarity ≥ 0.40
-            FR->>LOG: log_known(name, score)
-            LOG->>DB: INSERT KNOWN
-            FR->>UI: "Alice detected"
-        else similarity < 0.40
-            FR->>LOG: log_unknown(score, crop, embedding)
-            LOG->>DB: INSERT UNKNOWN
-            LOG->>LOG: save crop.jpg + emb.npy
-            FR->>UI: "I do not recognise this person"
-        end
-    end
-    FR->>UI: "READY - PRESS BTN"
-    Note over U,UI: 5-second cooldown before next press accepted
-```
-
-
-### 1.3 Dashboard request flow
-
-```
-sequenceDiagram
-    participant B as 🌐 Browser
-    participant F as Flask
-    participant Q as queries.py
-    participant DB as SQLite
-    
-    B->>F: GET /
-    F->>Q: get_summary_stats()
-    Q->>DB: SELECT status, COUNT(*) GROUP BY status
-    DB-->>Q: rows
-    Q-->>F: {known: N, unknown: M, ...}
-    F->>Q: get_recent_events(limit=10)
-    Q->>DB: SELECT ... LIMIT 10
-    DB-->>Q: rows
-    Q-->>F: list
-    F->>F: render dashboard.html
-    F-->>B: HTML (200)
-    
-    B->>F: GET /unknown/42/image
-    F->>Q: get_event_by_id(42)
-    Q->>DB: SELECT * WHERE id=42
-    DB-->>Q: row
-    Q-->>F: {image_path: "logs/..."}
-    F->>F: validate path inside UNKNOWN_FACES_DIR
-    F-->>B: send_file(image.jpg) or 404
-```
-
-
----
-
-## 2. Component reference
-
-### 2.1 Every file, what it does
-
-| **File**                   | **Type**      | **Purpose**                                                |
-| :------------------------- | :------------ | :--------------------------------------------------------- |
-| `face_recognition.py`      | Service entry | Main loop, GPIO, integration                               |
-| `config.py`                | Config        | All paths, GPIO pins, thresholds                           |
-| `face_camera.py`           | Helper        | `open_camera()`, `capture_best_face()`, `create_arcface()` |
-| `face_database.py`         | Helper        | Load `.npy` + `.csv`, cosine similarity matching           |
-| `button_handler.py`        | Helper        | GPIO debounce + cooldown + `lgpio` callback                |
-| `bluetooth_audio.py`       | Helper        | Piper TTS + `paplay` to BT sink                            |
-| `oled_display.py`          | Helper        | SH1106 rendering                                           |
-| `recognition_logger.py`    | **NEW**       | Writes events to SQLite, saves crops + embeddings          |
-| `database_setup.py`        | **NEW**       | Creates schema, syncs people table                         |
-| `web_dashboard/app.py`     | **NEW**       | Flask app + all routes                                     |
-| `web_dashboard/queries.py` | **NEW**       | All SQL queries (read-only + one UPDATE)                   |
-| `web_dashboard/config.py`  | **NEW**       | Self-contained paths (no `cv2` import)                     |
-| `web_dashboard/templates/` | **NEW**       | 8 HTML templates (Jinja2)                                  |
-| `web_dashboard/static/`    | **NEW**       | CSS + minimal JS                                           |
-| `run_dashboard.sh`         | **NEW**       | Foreground dashboard runner                                |
-| `backup_database.sh`       | **NEW**       | Safe SQLite `.backup`                                      |
-| `show_dashboard_url.sh`    | **NEW**       | Prints reachable URLs                                      |
-| `face-dashboard.service`   | **NEW**       | systemd unit                                               |
-| `tests/*.py`               | **NEW**       | 5 test modules, all pure-Python                            |
-
-### 2.2 Key constants in `config.py`
-
-
-```
-THRESHOLD = 0.40              # cosine similarity → KNOWN
-YUNET_SCORE_THRESHOLD = 0.60  # face detection confidence
-CAPTURE_SECONDS = 1.0         # how long to sample frames per press
-MIN_FACE_SIZE = 40            # reject tiny faces (pixels)
-BUTTON_COOLDOWN_SECONDS = 5.0 # ignore repeats for 5s
-CAMERA_WIDTH = 320            # capture resolution
-CAMERA_HEIGHT = 240
-ORT_INTRA_OP_THREADS = 2      # ONNX CPU threads
-DASHBOARD_PORT = 5000
-```
-
-
-Editing any of these requires restarting the relevant service:
-
-
-```
-sudo systemctl restart face-recognition   # for threshold, camera, GPIO
-sudo systemctl restart face-dashboard     # for dashboard port
-```
-
-
----
-
-## 3. Database schema
-
-### 3.1 The two tables
-
-```
-erDiagram
-    recognition_events ||--o{ people : "person_id (nullable)"
-    
-    recognition_events {
-        INTEGER id PK
-        TEXT timestamp "ISO-8601 UTC"
-        TEXT created_at "ISO-8601 UTC"
-        INTEGER person_id FK "nullable"
-        TEXT person_name "raw label from metadata.csv"
-        TEXT status "KNOWN | UNKNOWN | NO_FACE | ERROR"
-        REAL similarity_score "nullable"
-        TEXT image_path "relative to project root"
-        TEXT embedding_path "relative to project root"
-        TEXT review_status "PENDING | CONFIRMED | DISMISSED"
-        TEXT error_message "nullable"
-    }
-    
-    people {
-        INTEGER id PK
-        TEXT name "unique, matches metadata.csv"
-        TEXT created_at
-    }
-```
-
-
-### 3.2 What each status means
-
-| **Status**  | `person_name`    | `similarity_score` | `image_path` | `review_status`            |
-| :---------- | :--------------- | :----------------- | :----------- | :------------------------- |
-| **KNOWN**   | the matched name | best similarity    | NULL         | NULL                       |
-| **UNKNOWN** | NULL             | best similarity    | saved crop   | `PENDING`                  |
-| **NO_FACE** | NULL             | NULL               | NULL         | NULL                       |
-| **ERROR**   | NULL             | NULL               | NULL         | NULL (`error_message` set) |
-
-### 3.3 Indexes (for performance)
-
-
-```
-idx_events_timestamp     ← fast ORDER BY timestamp DESC (default dashboard view)
-idx_events_status        ← fast WHERE status = 'UNKNOWN'
-idx_events_person_id     ← fast JOIN on people
-idx_events_review_status ← fast WHERE review_status = 'PENDING' (partial index)
-```
-
-
-### 3.4 WAL mode
-
-
-```
-PRAGMA journal_mode=WAL;
-```
-
-
-This is what allows logger and dashboard to work simultaneously. Two files appear next to `recognition.db`:
-
-- `recognition.db-wal` — write-ahead log
-- `recognition.db-shm` — shared memory
-
-**Both must be kept if you manually copy the DB.** The backup script handles this correctly (uses `.backup` API, not `cp`).
-
----
-
-## 4. Service management
-
-### 4.1 The four `systemctl` commands you need
-
-| **Command**                | **What it does**                                |
-| :------------------------- | :---------------------------------------------- |
-| `systemctl status <name>`  | Show current state (running / stopped / failed) |
-| `systemctl start <name>`   | Start now                                       |
-| `systemctl stop <name>`    | Stop now                                        |
-| `systemctl restart <name>` | Stop + start                                    |
-| `systemctl enable <name>`  | Auto-start on boot                              |
-| `systemctl disable <name>` | Don't auto-start on boot                        |
-
-### 4.2 Current state (yours)
-
-
-```
-systemctl is-active face-recognition   # active
-systemctl is-active face-dashboard     # active
-systemctl is-enabled face-recognition  # enabled
-systemctl is-enabled face-dashboard    # enabled
-```
-
-
-### 4.3 Common scenarios
-
-**Scenario: I want to stop the dashboard temporarily (keep recognition running).**
-
-
-```
-sudo systemctl stop face-dashboard
-# recognition unaffected
-sudo systemctl start face-dashboard   # when you want it back
-```
-
-
-**Scenario: I edited** `config.py`**, need to apply.**
-
-
-```
-sudo systemctl restart face-recognition
-sudo systemctl restart face-dashboard
-```
-
-
-**Scenario: I edited a template or CSS file.**
-
-Only the dashboard needs restart:
-
-
-```
-sudo systemctl restart face-dashboard
-```
-
-
-**Scenario: I edited** `face_recognition.py`**.**
-
-Only recognition needs restart:
-
-
-```
-sudo systemctl restart face-recognition
-```
-
-
-**Scenario: something is broken, I want to see logs.**
-
-
-```
-sudo journalctl -u face-recognition -n 100 --no-pager
-sudo journalctl -u face-dashboard -n 100 --no-pager
-```
-
-
-**Scenario: I want to see real-time logs.**
-
-
-```
-sudo journalctl -u face-recognition -f
-# press Ctrl-C to stop following
-```
-
-
-### 4.4 Verify service files are correct
-
-
-```
-# Show effective service config (includes drop-ins):
-sudo systemctl cat face-dashboard
-
-# Show only environment variables:
-sudo systemctl show face-dashboard -p Environment
-
-# Test if unit file syntax is valid:
-sudo systemd-analyze verify /etc/systemd/system/face-dashboard.service
-```
-
-
-### 4.5 If a service fails to start
-
-
-```
-# Step 1 — see why:
-sudo systemctl status face-dashboard
-sudo journalctl -u face-dashboard -n 30 --no-pager
-
-# Step 2 — common causes:
-#   - Wrong ExecStart= path (check venv exists)
-#   - Python syntax error (test: python -c "import web_dashboard.app")
-#   - Missing file (the log says "No such file")
-#   - Port 5000 already used (kill conflicting process)
-
-# Step 3 — try running manually to see the full traceback:
+```bash
 cd /home/pi/FaceRecognitionSystem2
-source /home/pi/FaceRecognitionSystem/.venv/bin/activate
+```
+
+### 1.2 Activate the Python Virtual Environment
+
+```bash
+source /home/pi/FaceRecognitionSystem2/.venv/bin/activate
+```
+
+After activation, the terminal should display the `(.venv)` prefix.
+
+### 1.3 Verify Python
+
+```bash
+which python
+python --version
+```
+
+The Python executable should point to the project's virtual environment.
+
+### 1.4 Check Project Files
+
+```bash
+cd /home/pi/FaceRecognitionSystem2
+ls -la
+```
+
+Check whether the required scripts and directories exist before running commands that depend on them.
+
+---
+
+## 2. Running the Application
+
+### 2.1 Run Face Recognition Manually
+
+Activate the virtual environment and execute:
+
+```bash
+cd /home/pi/FaceRecognitionSystem2
+source /home/pi/FaceRecognitionSystem2/.venv/bin/activate
+python face_recognition.py
+```
+
+Press `Ctrl+C` to stop the manually launched application.
+
+**Important:** If `face-recognition.service` is already running, stop it before launching another instance that uses the same camera or GPIO resources.
+
+```bash
+sudo systemctl stop face-recognition
+```
+
+After testing, start the service again if required:
+
+```bash
+sudo systemctl start face-recognition
+```
+
+### 2.2 Run the Web Dashboard Manually
+
+If the dashboard supports execution as a Python module, run:
+
+```bash
+cd /home/pi/FaceRecognitionSystem2
+source /home/pi/FaceRecognitionSystem2/.venv/bin/activate
 python -m web_dashboard.app
 ```
 
+Press `Ctrl+C` to stop the dashboard.
 
----
+### 2.3 Check the Dashboard URL
 
-## 5. Log viewing
+If the helper script exists:
 
-### 5.1 The three types of logs
-
-| **Type**            | **Where** | **Command**                      |
-| :------------------ | :-------- | :------------------------------- |
-| Recognition service | journald  | `journalctl -u face-recognition` |
-| Dashboard service   | journald  | `journalctl -u face-dashboard`   |
-| Flask request log   | journald  | (included in dashboard log)      |
-
-### 5.2 Useful `journalctl` filters
-
-
-```
-# Last 50 lines
-sudo journalctl -u face-dashboard -n 50 --no-pager
-
-# Since 10 minutes ago
-sudo journalctl -u face-dashboard --since "10 minutes ago"
-
-# Since a specific time
-sudo journalctl -u face-dashboard --since "2026-10-26 14:00"
-
-# Today only
-sudo journalctl -u face-dashboard --since today
-
-# Filter by keyword
-sudo journalctl -u face-recognition | grep -i error
-
-# Follow live
-sudo journalctl -u face-recognition -f
-```
-
-
-### 5.3 What you'll see in recognition logs
-
-| **Prefix**  | **Meaning**                              |
-| :---------- | :--------------------------------------- |
-| `[BUTTON]`  | Button press / cooldown / scan lifecycle |
-| `[CAPTURE]` | Frame sampling during a scan             |
-| `[RESULT]`  | Final decision (KNOWN/UNKNOWN/NO_FACE)   |
-| `[TIMING]`  | How long the scan took                   |
-| `[FACE]`    | Detector confidence                      |
-| `[LOGGER]`  | Database write success / failure         |
-| `[VOICE]`   | Text queued for speech                   |
-| `[AUDIO]`   | Bluetooth / Piper status                 |
-| `[OLED]`    | Display update success                   |
-| `[FATAL]`   | Unrecoverable startup error              |
-| `[STOP]`    | Clean shutdown                           |
-
-### 5.4 What you'll see in dashboard logs
-
-| **Line**                                     | **Meaning**                         |
-| :------------------------------------------- | :---------------------------------- |
-| `[DASHBOARD] Serving on http://0.0.0.0:5000` | Started successfully                |
-| `[DASHBOARD] Database: ...`                  | Which DB file is being read         |
-| `GET / 200`                                  | A page was served successfully      |
-| `GET /static/... 304`                        | Cached asset — normal               |
-| `GET /favicon.ico 404`                       | Browser looking for icon — harmless |
-| `POST /unknown/N/review 302`                 | Review status was updated           |
-| `POST /unknown/N/review 403`                 | CSRF token rejected                 |
-
----
-
-## 6. Backup and restore
-
-### 6.1 Daily backup (recommended)
-
-
-```
+```bash
 cd /home/pi/FaceRecognitionSystem2
-./backup_database.sh
-```
-
-
-Output:
-
-
-```
-Database backed up to: /home/pi/FaceRecognitionSystem2/backups/recognition_20261026_143500.db
-```
-
-
-The backup runs **while services are running** — safe, no need to stop anything.
-
-### 6.2 Full backup (DB + images)
-
-
-```
-./backup_database.sh --with-files
-```
-
-
-Also creates `backups/unknown_files_20261026_143500.tar.gz`.
-
-### 6.3 Restore a backup
-
-**Warning:** this overwrites the current database. Stop recognition first.
-
-
-```
-# Step 1 — stop both services
-sudo systemctl stop face-recognition
-sudo systemctl stop face-dashboard
-
-# Step 2 — restore (pick one)
-cp backups/recognition_20261026_143500.db database/recognition.db
-
-# If restoring files too:
-tar -xzf backups/unknown_files_20261026_143500.tar.gz -C .
-
-# Step 3 — restart
-sudo systemctl start face-recognition
-sudo systemctl start face-dashboard
-
-# Step 4 — verify
-curl -s http://127.0.0.1:5000/health
-```
-
-
-### 6.4 Copy backups off the Pi
-
-
-```
-# From your laptop:
-scp pi@192.168.114.246:/home/pi/FaceRecognitionSystem2/backups/*.db ./
-scp pi@192.168.114.246:/home/pi/FaceRecognitionSystem2/backups/*.tar.gz ./
-```
-
-
-### 6.5 Retention policy
-
-Nothing is deleted automatically. Over time:
-
-| **Data**           | **Size estimate** | **Growth**               |
-| :----------------- | :---------------- | :----------------------- |
-| Database rows      | \~200 bytes/event | \~4 MB per 20,000 events |
-| Unknown-face crops | \~4 KB/crop       | \~4 MB per 1000 unknowns |
-| Unknown embeddings | \~2 KB/file       | \~2 MB per 1000 unknowns |
-
-Clean old data manually when needed:
-
-
-```
-# Delete DB rows older than 90 days:
-sqlite3 database/recognition.db \
-  "DELETE FROM recognition_events WHERE timestamp < datetime('now', '-90 days');"
-
-# Delete crop files older than 90 days:
-find logs/unknown_faces -type f -mtime +90 -delete
-
-# Delete embedding files older than 90 days:
-find unknown_embeddings -type f -mtime +90 -delete
-```
-
-
----
-
-## 7. Database inspection
-
-### 7.1 Install the CLI (one-time)
-
-
-```
-sudo apt install -y sqlite3
-```
-
-
-The application doesn't need this — it's only for manual inspection.
-
-### 7.2 Common queries
-
-**Count by status:**
-
-
-```
-sqlite3 database/recognition.db \
-  "SELECT status, COUNT(*) FROM recognition_events GROUP BY status;"
-```
-
-
-Output:
-
-
-```
-KNOWN|127
-UNKNOWN|9
-NO_FACE|42
-ERROR|0
-```
-
-
-**Latest 10 events:**
-
-
-```
-sqlite3 -header -column database/recognition.db \
-  "SELECT id, timestamp, status, person_name, similarity_score
-   FROM recognition_events
-   ORDER BY id DESC LIMIT 10;"
-```
-
-
-**Today's events only:**
-
-
-```
-sqlite3 -header -column database/recognition.db \
-  "SELECT id, timestamp, status, person_name
-   FROM recognition_events
-   WHERE timestamp >= date('now')
-   ORDER BY id DESC;"
-```
-
-
-**All pending unknowns:**
-
-
-```
-sqlite3 -header -column database/recognition.db \
-  "SELECT id, timestamp, similarity_score, image_path
-   FROM recognition_events
-   WHERE status = 'UNKNOWN' AND review_status = 'PENDING'
-   ORDER BY id DESC;"
-```
-
-
-**Top recognised people:**
-
-
-```
-sqlite3 -header -column database/recognition.db \
-  "SELECT person_name, COUNT(*) AS count
-   FROM recognition_events
-   WHERE status = 'KNOWN'
-   GROUP BY person_name
-   ORDER BY count DESC;"
-```
-
-
-**Disk space used by database:**
-
-
-```
-du -h database/recognition.db*
-ls -lh logs/unknown_faces/ | head
-```
-
-
-### 7.3 Table structure
-
-
-```
-# Show all tables
-sqlite3 database/recognition.db ".tables"
-
-# Show columns of recognition_events
-sqlite3 database/recognition.db ".schema recognition_events"
-
-# Show columns of people
-sqlite3 database/recognition.db ".schema people"
-
-# List all indexes
-sqlite3 database/recognition.db ".indexes"
-```
-
-
-### 7.4 Manual fix — delete one bad row
-
-
-```
-# View it first:
-sqlite3 database/recognition.db "SELECT * FROM recognition_events WHERE id = 42;"
-
-# Then delete:
-sqlite3 database/recognition.db "DELETE FROM recognition_events WHERE id = 42;"
-
-# If it had an image file, delete it too:
-ls -l logs/unknown_faces/unknown_00000042_*.jpg
-rm logs/unknown_faces/unknown_00000042_*.jpg
-rm unknown_embeddings/unknown_00000042.npy
-```
-
-
----
-
-## 8. Adding a new person
-
-### 8.1 The four-step process
-
-```
-flowchart TD
-    A[Capture 10-20 photos of the new person] --> B[Generate embeddings]
-    B --> C[Append to embeddings_clean.npy]
-    A --> D[Append rows to metadata_clean.csv]
-    C --> E[Rebuild the .npy file]
-    D --> E
-    E --> F[python database_setup.py --resync-people]
-    F --> G[sudo systemctl restart face-recognition]
-    G --> H([✅ New person recognised])
-    
-    style H fill:#3fbf72,color:#fff
-```
-
-
-### 8.2 What you need
-
-1. **10–20 photos** of the person — front-facing, good lighting, varied angles.
-2. **The embedding generation script** — if you don't have one, use `insightface`:
-
-
-```
-# One-off script to add a new person
-import cv2
-import numpy as np
-from insightface.app import FaceAnalysis
-
-app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
-app.prepare(ctx_id=-1)
-
-embeddings = np.load("Embeddings/embeddings_clean.npy")
-new_embeddings = []
-
-for photo_path in ["photo1.jpg", "photo2.jpg", ...]:
-    img = cv2.imread(photo_path)
-    faces = app.get(img)
-    if len(faces) == 1:
-        new_embeddings.append(faces[0].normed_embedding)
-    else:
-        print(f"{photo_path}: expected 1 face, got {len(faces)}")
-
-all_embeddings = np.vstack([embeddings, np.array(new_embeddings)])
-np.save("Embeddings/embeddings_clean.npy", all_embeddings)
-
-# Append rows to metadata_clean.csv (one row per embedding)
-with open("Embeddings/metadata_clean.csv", "a") as f:
-    for _ in new_embeddings:
-        f.write(f"New_Person_Name,...\n")
-```
-
-
-3. **Then sync the people table:**
-
-
-```
-python database_setup.py --resync-people
-sudo systemctl restart face-recognition
-```
-
-
-### 8.3 Verify it worked
-
-
-```
-# Check new person is in the mirror:
-sqlite3 database/recognition.db "SELECT name FROM people WHERE name = 'New_Person_Name';"
-
-# Test by pressing button in front of them
-# Watch logs:
-sudo journalctl -u face-recognition -f
-```
-
-
----
-
-## 9. Reviewing unknown faces
-
-### 9.1 The workflow
-
-```
-flowchart LR
-    A[Unknown face detected] --> B[Saved to /unknown page]
-    B --> C[Caregiver opens dashboard]
-    C --> D[Reviews the crop]
-    D --> E{Who is this?}
-    E -->|Recognised| F[Click 'Mark confirmed']
-    E -->|Stranger| G[Click 'Dismiss']
-    E -->|Not sure yet| H[Leave as Pending]
-    F --> I[(review_status = CONFIRMED)]
-    G --> I2[(review_status = DISMISSED)]
-    H --> I3[(review_status = PENDING)]
-    
-    style F fill:#3fbf72,color:#fff
-    style G fill:#6b7785,color:#fff
-```
-
-
-### 9.2 How to use it
-
-1. Open `http://<pi-ip>:5000/unknown`
-2. Click any thumbnail
-3. On the detail page, click **Mark confirmed**, **Dismiss**, or **Reset to pending**
-4. Your choice is saved immediately to the database
-
-### 9.3 What "Confirmed" does NOT do
-
-**Important:** marking an unknown as `CONFIRMED` **does not add them to the face database**. It only records that a human reviewed this event.
-
-To actually make the system recognise this person next time, follow **Section 8** (Adding a new person).
-
-This design is intentional — automatic enrolment from an unknown face is risky (bad photo, wrong person, etc.).
-
-### 9.4 Filter by review status
-
-On `/unknown`, use the filter dropdown:
-
-- **All** — every unknown
-- **PENDING** — not reviewed yet
-- **CONFIRMED** — you recognised this face
-- **DISMISSED** — you marked as irrelevant
-
----
-
-## 10. Exporting data
-
-### 10.1 CSV export from dashboard
-
-Go to `/history` and click **Export CSV**. The export respects your current filters (search, status, date range).
-
-The downloaded file opens correctly in Excel, LibreOffice, and Google Sheets (UTF-8 BOM included).
-
-Columns in the CSV:
-
-
-```
-id, timestamp, status, person_name, similarity_score,
-review_status, error_message
-```
-
-
-### 10.2 Export directly from SQLite
-
-**Full table to CSV:**
-
-
-```
-sqlite3 -header -csv database/recognition.db \
-  "SELECT * FROM recognition_events;" > events.csv
-```
-
-
-**Filtered export (last 30 days, KNOWN only):**
-
-
-```
-sqlite3 -header -csv database/recognition.db \
-  "SELECT id, timestamp, person_name, similarity_score
-   FROM recognition_events
-   WHERE status = 'KNOWN'
-     AND timestamp >= datetime('now', '-30 days');" > known_recent.csv
-```
-
-
----
-
-## 11. Accessing the dashboard
-
-### 11.1 Three access methods compared
-
-| **Method**    | **URL**                       | **Works when**           | **Best for**    |
-| :------------ | :---------------------------- | :----------------------- | :-------------- |
-| **Direct IP** | `http://192.168.114.246:5000` | Same WiFi, IP unchanged  | Testing         |
-| **mDNS**      | `http://project17.local:5000` | Same WiFi, avahi running | Home networks   |
-| **Hotspot**   | `http://10.42.0.1:5000`       | Pi broadcasts WiFi       | Portable device |
-
-### 11.2 Find the current URL
-
-
-```
 ./show_dashboard_url.sh
 ```
 
-
-Example output:
-
-
-```
-Dashboard URL candidates (port 5000):
-
-  http://192.168.114.246:5000
-  http://project17.local:5000   (mDNS, if active)
-
-Dashboard health: OK (running)
-```
-
-
-### 11.3 Setup mDNS (if not working)
-
-
-```
-# Check if avahi is running
-sudo systemctl status avahi-daemon
-
-# If not:
-sudo apt install -y avahi-daemon
-sudo systemctl enable --now avahi-daemon
-
-# Check hostname
-hostname -f   # → project17.local
-
-# From laptop, test:
-ping project17.local
-```
-
-
-### 11.4 Setup hotspot (portable use)
-
-
-```
-# Create the hotspot
-sudo nmcli device wifi hotspot ifname wlan0 ssid CognitiveAssist password "choose-strong"
-
-# To check it's running
-nmcli connection show
-
-# To stop it (rarely needed)
-sudo nmcli connection down Hotspot
-
-# To remove it permanently
-sudo nmcli connection delete Hotspot
-```
-
+Open the displayed address in a browser on a device connected to the same local network.
 
 ---
 
-## 12. Troubleshooting
+## 3. Database Management
 
-### 12.1 Decision tree
+The documented SQLite database location is:
 
-```
-flowchart TD
-    A[Dashboard not loading] --> B{Services running?}
-    B -->|No| C[systemctl start both]
-    B -->|Yes| D{Same WiFi?}
-    D -->|No| E[Join same network]
-    D -->|Yes| F{Ping Pi?}
-    F -->|No| G[Wrong IP or firewall]
-    F -->|Yes| H{curl on Pi works?}
-    H -->|No| I[Service crashed - check journalctl]
-    H -->|Yes| J{Browser asks password?}
-    J -->|Yes| K[Auth enabled - enter creds]
-    J -->|No| L[Port blocked - check bind address]
-    
-    style A fill:#ff5d5d,color:#fff
-    style L fill:#3fbf72,color:#fff
+```text
+database/recognition.db
 ```
 
+The database contains recognition records and scheduled reminder information.
 
-### 12.2 Symptom → cause → fix table
+### 3.1 Initialise or Synchronise the Database
 
-| **Symptom**                           | **Likely cause**              | **Fix**                                                                       |
-| :------------------------------------ | :---------------------------- | :---------------------------------------------------------------------------- |
-| `site can't be reached`               | Wrong IP / different network  | `hostname -I` on Pi, verify laptop on same WiFi                               |
-| `Connection refused`                  | Dashboard not running         | `sudo systemctl start face-dashboard`                                         |
-| Page loads but 0 events               | Wrong DB path                 | Check `[DASHBOARD] Database:` in logs                                         |
-| Browser asks for password             | Basic auth enabled (good)     | Enter username + password from `systemctl show face-dashboard -p Environment` |
-| Images show broken                    | File deleted from disk        | Restore from backup or delete the row                                         |
-| `/static/js/dashboard.js` returns 404 | File not saved                | Verify `ls -l web_dashboard/static/js/dashboard.js`                           |
-| `Recognition service fails to start`  | Model file missing or corrupt | `sudo journalctl -u face-recognition -n 50`                                   |
-| `Camera cannot open`                  | USB unplugged / ribbon loose  | `rpicam-hello --list-cameras`, reseat cable                                   |
-| Button presses ignored                | Cooldown active               | Wait 5 seconds                                                                |
-| OLED stays blank                      | I2C not enabled               | `sudo raspi-config` → Interface → I2C → Enable                                |
-| Bluetooth audio silent                | Earbuds not connected         | `bluetoothctl connect 0D:B0:21:9E:9D:51`                                      |
-| `sqlite3: command not found`          | CLI not installed             | `sudo apt install -y sqlite3`                                                 |
-| Timestamps in wrong year              | Pi clock is wrong             | `sudo timedatectl set-ntp true`                                               |
-| `Permission denied` writing DB        | Wrong ownership               | `ls -l database/`; `sudo chown pi:pi database/`                               |
-| Dashboard slow                        | Browser spam reloading        | Stop polling; the dashboard does not auto-refresh                             |
+If the script supports the `--resync-people` argument, run:
 
-### 12.3 When all else fails
-
-
-```
-# 1. Full system snapshot
-systemctl status face-recognition face-dashboard --no-pager > /tmp/status.txt
-sudo journalctl -u face-recognition -n 100 --no-pager >> /tmp/status.txt
-sudo journalctl -u face-dashboard -n 100 --no-pager >> /tmp/status.txt
-df -h >> /tmp/status.txt
-free -h >> /tmp/status.txt
-cat /tmp/status.txt
-
-# 2. Try running manually to see the full traceback
+```bash
 cd /home/pi/FaceRecognitionSystem2
-source /home/pi/FaceRecognitionSystem/.venv/bin/activate
-python -m web_dashboard.app        # for dashboard issues
-python face_recognition.py         # for recognition issues
+source /home/pi/FaceRecognitionSystem2/.venv/bin/activate
+python database_setup.py --resync-people
 ```
 
+This command is intended to synchronise registered people with the database.
 
----
+Do not delete or recreate the database as a troubleshooting shortcut.
 
-## 13. Security
+### 3.2 List Database Tables
 
-### 13.1 What's protected
-
-| **Layer**        | **Protection**                   |
-| :--------------- | :------------------------------- |
-| Dashboard access | HTTP basic auth (if configured)  |
-| Image serving    | Path traversal blocked           |
-| CSRF on POST     | Session token required           |
-| SQL injection    | All queries parameterised        |
-| XSS              | Jinja autoescape on, no `\|safe` |
-| Debug mode       | Hard-coded `debug=False`         |
-| Reloader         | Disabled (`use_reloader=False`)  |
-
-### 13.2 What's NOT protected
-
-| **Layer**        | **Risk**                                                   |
-| :--------------- | :--------------------------------------------------------- |
-| Database file    | Anyone with SSH or physical access can read it             |
-| Traffic on WiFi  | HTTP, not HTTPS — visible to anyone sniffing the same WiFi |
-| Env var password | Stored in `/etc/systemd/system/face-dashboard.service.d/`  |
-
-### 13.3 Recommendations
-
-1. **Enable basic auth** — do this now (see Section 4).
-2. **Never port-forward 5000 from your router** — the dashboard is designed for LAN-only use.
-3. **Keep the Pi on a trusted WiFi** — no public hotspots.
-4. **Change the default password immediately**.
-5. **If you must use HTTPS** — put a reverse proxy (nginx or Caddy) with a self-signed cert in front of Flask. This is not covered here.
-
-### 13.4 Emergency: disable all access
-
-
-```
-sudo systemctl stop face-dashboard
-systemctl is-active face-dashboard    # → inactive
+```bash
+cd /home/pi/FaceRecognitionSystem2
+sqlite3 database/recognition.db ".tables"
 ```
 
+### 3.3 Inspect the Database Schema
 
-Recognition continues. Nobody can reach the dashboard.
+Inspect the recognition-events table:
 
----
-
-## 14. Maintenance schedule
-
-### 14.1 Daily (automatic, no action needed)
-
-- Recognition service logs events to SQLite
-- Dashboard reads and displays them
-
-### 14.2 Weekly
-
-
-```
-# Check disk space
-df -h
-
-# Check for errors in logs
-sudo journalctl -u face-recognition --since "7 days ago" | grep -i error
-sudo journalctl -u face-dashboard --since "7 days ago" | grep -i error
-
-# Run backup
-./backup_database.sh
+```bash
+sqlite3 database/recognition.db ".schema recognition_events"
 ```
 
+Inspect the scheduled-messages table:
 
-### 14.3 Monthly
-
-
-```
-# Full backup with images
-./backup_database.sh --with-files
-
-# Copy backups off the Pi
-# (use scp from your laptop)
-
-# Check DB size
-du -h database/recognition.db
-ls -lh logs/unknown_faces/ | tail -1
-
-# Review unknown faces
-# Open /unknown in dashboard, clear the PENDING queue
-
-# Verify the 7-step test in README
+```bash
+sqlite3 database/recognition.db ".schema scheduled_messages"
 ```
 
+Inspect the people table:
 
-### 14.4 Quarterly
-
-
-```
-# Check for system updates
-sudo apt update
-sudo apt list --upgradable
-
-# Check temperature
-cat /sys/class/thermal/thermal_zone0/temp | awk '{print $1/1000" C"}'
-vcgencmd get_throttled   # should be 0x0
-
-# Review disk usage trend
-df -h
+```bash
+sqlite3 database/recognition.db ".schema people"
 ```
 
+### 3.4 View Recent Recognition Events
 
-### 14.5 Cleaning old data (yearly, or when DB > 100 MB)
-
-
-```
-# Stop services first
-sudo systemctl stop face-recognition face-dashboard
-
-# Back up before cleaning
-./backup_database.sh --with-files
-
-# Delete old records
+```bash
+cd /home/pi/FaceRecognitionSystem2
 sqlite3 database/recognition.db \
-  "DELETE FROM recognition_events WHERE timestamp < datetime('now', '-365 days');"
+  "SELECT * FROM recognition_events ORDER BY id DESC LIMIT 5;"
+```
 
-# Reclaim space
-sqlite3 database/recognition.db "VACUUM;"
+### 3.5 View Scheduled Messages
 
-# Restart
+```bash
+cd /home/pi/FaceRecognitionSystem2
+sqlite3 database/recognition.db \
+  "SELECT id, scheduled_time, status FROM scheduled_messages ORDER BY scheduled_time;"
+```
+
+If SQLite reports that a table or column does not exist, inspect the actual schema before modifying the database.
+
+### 3.6 Back Up the Database
+
+If the project backup script supports the `--with-files` argument:
+
+```bash
+cd /home/pi/FaceRecognitionSystem2
+./backup_database.sh --with-files
+```
+
+Check the script output to confirm the backup location.
+
+Back up important records before performing database maintenance.
+
+---
+
+## 4. Systemd Service Management
+
+The documented service names are:
+
+- `face-recognition`
+- `face-dashboard`
+
+The face-recognition service runs the main application. The dashboard service runs the web interface.
+
+### 4.1 Check Service Status
+
+Check the face-recognition service:
+
+```bash
+sudo systemctl status face-recognition
+```
+
+Check the dashboard service:
+
+```bash
+sudo systemctl status face-dashboard
+```
+
+Check whether the services are active:
+
+```bash
+systemctl is-active face-recognition
+systemctl is-active face-dashboard
+```
+
+### 4.2 Start a Service
+
+Start face recognition:
+
+```bash
 sudo systemctl start face-recognition
+```
+
+Start the dashboard:
+
+```bash
 sudo systemctl start face-dashboard
 ```
 
+### 4.3 Stop a Service
+
+Stop face recognition:
+
+```bash
+sudo systemctl stop face-recognition
+```
+
+Stop the dashboard:
+
+```bash
+sudo systemctl stop face-dashboard
+```
+
+Stopping the dashboard should not stop face recognition when both applications are configured as separate services.
+
+### 4.4 Restart a Service
+
+Restart face recognition after modifying its code or configuration:
+
+```bash
+sudo systemctl restart face-recognition
+```
+
+Restart the dashboard after modifying its code or configuration:
+
+```bash
+sudo systemctl restart face-dashboard
+```
+
+### 4.5 View Live Logs
+
+Monitor face-recognition logs:
+
+```bash
+sudo journalctl -u face-recognition -f
+```
+
+Monitor dashboard logs:
+
+```bash
+sudo journalctl -u face-dashboard -f
+```
+
+Press `Ctrl+C` to stop following the logs.
+
+### 4.6 View Recent Logs
+
+```bash
+sudo journalctl -u face-recognition -n 150 --no-pager
+```
+
+```bash
+sudo journalctl -u face-dashboard -n 150 --no-pager
+```
+
+### 4.7 Enable Services at Boot
+
+Enable both services:
+
+```bash
+sudo systemctl enable face-recognition face-dashboard
+```
+
+If the dashboard should remain optional, enable only face recognition:
+
+```bash
+sudo systemctl enable face-recognition
+sudo systemctl disable face-dashboard
+```
+
+### 4.8 Disable Automatic Startup
+
+```bash
+sudo systemctl disable face-recognition face-dashboard
+```
+
+Disabling a service prevents automatic startup at boot. It does not necessarily stop a service that is already running.
+
+### 4.9 Modify Dashboard Service Settings
+
+Open the systemd override editor:
+
+```bash
+sudo systemctl edit face-dashboard
+```
+
+For example, if the application supports a dashboard password environment variable, an override could contain:
+
+```ini
+[Service]
+Environment="DASHBOARD_PASSWORD=replace-with-a-strong-password"
+```
+
+Save the file and apply the changes:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart face-dashboard
+```
+
+Only configure environment variables that the application actually supports. Do not commit passwords or secrets to version control.
 
 ---
 
-## 15. FAQ
+## 5. Web Dashboard
 
-**Q: Can I use this without internet?**
-A: Yes. That's the entire point. Neither service needs internet. Only the initial install (`pip install Flask`) needs internet.
+The dashboard is intended to be accessed through a browser on the same local network as the Raspberry Pi.
 
-**Q: Do I need to keep the terminal open?**
-A: No. Both services run as systemd daemons in the background. Terminal is only for admin commands.
+### 5.1 Open the Dashboard
 
-**Q: What happens if the dashboard crashes?**
-A: Recognition keeps working. systemd restarts the dashboard automatically (`Restart=on-failure`).
+Use:
 
-**Q: What happens if recognition crashes?**
-A: The dashboard keeps working (reads existing data). systemd restarts recognition after 5 seconds.
+```text
+http://<pi-ip>:5000
+```
 
-**Q: Can I add more people?**
-A: Yes — see Section 8.
+Replace `<pi-ip>` with the Raspberry Pi's current local IP address.
 
-**Q: Can I add more cameras?**
-A: Not with the current design. `CAMERA_INDEX` supports one camera at a time.
+### 5.2 Dashboard Pages
 
-**Q: Can I run recognition without the button?**
-A: You can modify `face_recognition.py` to loop constantly, but this is not recommended — it will consume 100% CPU constantly and the Pi 4B will overheat.
+The documented dashboard pages are:
 
-**Q: Where are the images stored?**
-A: Unknown-face crops → `logs/unknown_faces/`. Embeddings → `unknown_embeddings/`. Both referenced by relative paths in the DB.
+| Page | Route | Purpose |
+|---|---|---|
+| Dashboard | `/` | Summary statistics and recent events |
+| History | `/history` | Recognition history and filtering |
+| Unknown Faces | `/unknown` | Review unknown-face records |
+| People | `/people` | View registered people |
+| Schedule | `/schedule` | Create and cancel audio reminders |
 
-**Q: Why 112×112 for saved images?**
-A: That's the size ArcFace uses internally. Saving at that size costs \~4 KB per image instead of \~50 KB per full frame. If you need larger, edit `face_recognition.py` to pass the full frame instead of the aligned crop (Batch 2 has the details).
+The exact functionality available on each page depends on the installed dashboard implementation.
 
-**Q: What's the difference between UNKNOWN and NO_FACE?**
-A: **UNKNOWN** = a face was detected, but didn't match anyone. **NO_FACE** = no face was detected at all.
+### 5.3 Local Network Access
 
-**Q: Why is** `person_id` **sometimes NULL even for KNOWN events?**
-A: Because the `people` table hadn't been populated yet when the event was logged. Run `python database_setup.py --resync-people`. New events will have `person_id` set; old ones won't (unless you manually backfill).
+The dashboard can be accessed over a local network without internet access, provided the Raspberry Pi and the browser device can communicate with each other.
 
-**Q: How do I change the threshold?**
-A: Edit `THRESHOLD = 0.40` in `config.py`, then `sudo systemctl restart face-recognition`. Lower = more false positives, higher = more unknowns.
-
-**Q: How do I disable the dashboard entirely?**
-A: `sudo systemctl stop face-dashboard; sudo systemctl disable face-dashboard`. Recognition keeps working.
-
-**Q: How do I see what's on the Pi without a screen?**
-A: SSH in (`ssh pi@<pi-ip>`), use the commands in Section 4 and 5.
-
-**Q: Can I access the dashboard from outside my home?**
-A: Not safely. You would need VPN or port forwarding with HTTPS. Not recommended — this tool handles biometric data.
-
-**Q: What if the SD card dies?**
-A: You lose everything unless you have backups off the Pi. **Backup regularly** (Section 6).
+However, the documented scheduler implementation separately checks internet connectivity before accepting or processing scheduled reminders.
 
 ---
 
-## 🎓 Final checklist — verify your install
+## 6. General Troubleshooting
 
-Before you call this done, run through this once:
+### 6.1 Face Recognition Is Not Starting
 
-- □ 
+Check the service status:
 
-  `systemctl is-active face-recognition` → `active`
-- □ 
+```bash
+sudo systemctl status face-recognition
+```
 
-  `systemctl is-active face-dashboard` → `active`
-- □ 
+Inspect recent logs:
 
-  `systemctl is-enabled face-recognition` → `enabled`
-- □ 
+```bash
+sudo journalctl -u face-recognition -n 150 --no-pager
+```
 
-  `systemctl is-enabled face-dashboard` → `enabled`
-- □ 
+Restart the service if appropriate:
 
-  `curl http://127.0.0.1:5000/health` → JSON with `"status": "ok"`
-- □ 
+```bash
+sudo systemctl restart face-recognition
+```
 
-  From laptop: `http://<pi-ip>:5000/` → loads (with password prompt)
-- □ 
+### 6.2 Dashboard Is Not Accessible
 
-  From laptop: `/history` → shows events
-- □ 
+Check the service:
 
-  From laptop: `/unknown` → shows thumbnails
-- □ 
+```bash
+sudo systemctl status face-dashboard
+```
 
-  Press button → new event appears within 5 seconds
-- □ 
+Inspect its logs:
 
-  `./backup_database.sh` → creates file in `backups/`
-- □ 
+```bash
+sudo journalctl -u face-dashboard -n 150 --no-pager
+```
 
-  `sudo reboot` → both services active again after 90s
-- □ 
+Confirm that the dashboard is listening on the expected port and that both devices can communicate over the local network.
 
-  `./show_dashboard_url.sh` → prints correct URL
+### 6.3 Bluetooth Audio Is Not Working
+
+Check the Bluetooth device:
+
+```bash
+bluetoothctl info <BLUETOOTH-MAC>
+```
+
+Replace `<BLUETOOTH-MAC>` with the actual Bluetooth device address.
+
+Inspect the application logs:
+
+```bash
+sudo journalctl -u face-recognition -f
+```
+
+Look for audio initialisation or playback errors.
+
+### 6.4 Camera Is Not Working
+
+Inspect the face-recognition logs:
+
+```bash
+sudo journalctl -u face-recognition -n 150 --no-pager
+```
+
+Check the camera connection and application configuration.
+
+### 6.5 System Clock Is Incorrect
+
+Check the system clock and time synchronisation status:
+
+```bash
+timedatectl status
+```
+
+Enable NTP synchronisation when appropriate:
+
+```bash
+sudo timedatectl set-ntp true
+```
+
+This enables system time synchronisation through the configured time service. It does not guarantee successful synchronisation unless a suitable time source is reachable.
+
+---
+
+## 7. The Scheduler Feature — Deep Dive
+
+The scheduler allows caregivers to create audio reminders that are intended to play automatically through the Raspberry Pi's configured Bluetooth audio output.
+
+Because reminders may be important, verify the system clock, connectivity, scheduler status, and audio output instead of assuming that every saved reminder will be delivered.
+
+### 7.1 Scheduler Components
+
+The documented scheduling process involves three main components.
+
+#### 1. Web Interface
+
+Files:
+
+```text
+web_dashboard/app.py
+web_dashboard/templates/schedule.html
+```
+
+The caregiver enters a message and selects a date and time.
+
+According to the described implementation:
+
+- The dashboard checks internet connectivity.
+- The selected local time is converted to UTC.
+- The task is saved in the SQLite database with status `PENDING`.
+
+#### 2. Database
+
+Table:
+
+```text
+scheduled_messages
+```
+
+The database stores scheduled tasks until they become due or are cancelled.
+
+The documented implementation stores the scheduled time in UTC.
+
+#### 3. Background Scheduler
+
+Location:
+
+```text
+scheduler_worker in face_recognition.py
+```
+
+The described worker:
+
+- Runs a background loop approximately every 15 seconds.
+- Checks internet connectivity.
+- Queries the database for due `PENDING` tasks.
+- Updates a due task's status before submitting its message to the audio queue.
+- Sends the message to the configured audio output.
+- Repeats the message after a two-second delay, according to the described implementation.
+
+The exact processing order and status-update behaviour should be verified against the installed source code.
+
+### 7.2 Scheduler Workflow
+
+```text
++--------------------------------+
+| Caregiver opens Schedule page  |
++---------------+----------------+
+                |
+                v
++--------------------------------+
+| Enter message and date/time    |
++---------------+----------------+
+                |
+                v
++--------------------------------+
+| Is internet reachable?         |
++---------------+----------------+
+                |
+          +-----+-----+
+          |           |
+         No          Yes
+          |           |
+          v           v
++----------------+  +--------------------------+
+| Show error     |  | Convert local time to UTC|
+| Do not save    |  +-------------+------------+
++----------------+                |
+                                  v
+                     +--------------------------+
+                     | Save task as PENDING     |
+                     +-------------+------------+
+                                   |
+                                   v
+                     +--------------------------+
+                     | Scheduler checks tasks  |
+                     | approximately every 15s |
+                     +-------------+------------+
+                                   |
+                                   v
+                     +--------------------------+
+                     | Is internet reachable?  |
+                     +-------------+------------+
+                                   |
+                             +-----+-----+
+                             |           |
+                            No          Yes
+                             |           |
+                             v           v
+                   +----------------+  +----------------------+
+                   | Log and wait   |  | Query due PENDING    |
+                   | for connection |  | tasks in SQLite      |
+                   +----------------+  +----------+-----------+
+                                                  |
+                                                  v
+                                      +------------------------+
+                                      | Is a task due?         |
+                                      +-----------+------------+
+                                                  |
+                                            +-----+-----+
+                                            |           |
+                                           No          Yes
+                                            |           |
+                                            v           v
+                                      +-----------+  +------------------+
+                                      | Wait for  |  | Update task      |
+                                      | next check|  | status atomically|
+                                      +-----------+  +--------+---------+
+                                                             |
+                                                             v
+                                                  +---------------------+
+                                                  | Queue spoken message|
+                                                  +----------+----------+
+                                                             |
+                                                             v
+                                                  +---------------------+
+                                                  | Play message as     |
+                                                  | configured          |
+                                                  +---------------------+
+```
+
+This flowchart represents the described implementation. Verify the actual source code to confirm the precise sequence and error-handling behaviour.
+
+### 7.3 Why Does the Scheduler Require Internet?
+
+The described implementation checks internet access using a connection attempt similar to:
+
+```python
+socket.create_connection(("8.8.8.8", 53))
+```
+
+The stated reason for this requirement is to help ensure that the Raspberry Pi's system clock is accurate.
+
+A Raspberry Pi without a battery-backed real-time clock (RTC) may not retain accurate wall-clock time after a complete power loss. Network Time Protocol (NTP) can synchronise the clock when a suitable network and time source are available.
+
+For example:
+
+- Caregiver-selected time: `2:00 PM IST`
+- IST offset: `UTC+05:30`
+- Equivalent UTC time: `08:30 UTC`
+
+The application stores the scheduled time in UTC so that comparisons can be made consistently.
+
+**Important distinctions:**
+
+- An internet connection does not automatically prove that the system clock has synchronised.
+- NTP requires a configured time service and a reachable time source.
+- A failed connection to `8.8.8.8:53` does not necessarily mean every possible network route is unavailable.
+- Requiring internet for scheduling is an implementation choice, not a fundamental requirement of local scheduling. A reliable RTC or another suitable offline time strategy can support local scheduling without internet.
+
+### 7.4 What Happens When the Pi Is Offline?
+
+According to the described implementation:
+
+1. The dashboard rejects new scheduling requests.
+2. The dashboard displays an error.
+3. The scheduler worker pauses processing while its connectivity check fails.
+4. The worker logs a message similar to:
+
+```text
+[SCHEDULER] No internet connection. Waiting to sync time...
+```
+
+5. The worker resumes checking after connectivity returns.
+
+Do not assume that a reminder will be delivered immediately after reconnection. Check the clock, task status, service logs, and audio output.
+
+### 7.5 Task Statuses
+
+The documented statuses are:
+
+| Status | Meaning |
+|---|---|
+| `PENDING` | The task is waiting to be processed |
+| `COMPLETED` | The worker has claimed or processed the task according to the implementation |
+| `CANCELLED` | The task was cancelled before processing |
+
+**Important:** If the implementation updates the status to `COMPLETED` before submitting the audio, that status does not prove the reminder was actually played or heard.
+
+### 7.6 Schedule a Reminder
+
+1. Open the dashboard:
+
+   ```text
+   http://<pi-ip>:5000
+   ```
+
+2. Navigate to the Schedule page:
+
+   ```text
+   /schedule
+   ```
+
+3. Select the date and time.
+
+4. Enter the reminder message.
+
+   Example:
+
+   ```text
+   It is time to take your medication.
+   ```
+
+5. Click **Schedule Message**.
+
+6. Confirm that the task appears in the task history with status `PENDING`.
+
+7. Monitor the face-recognition service logs:
+
+   ```bash
+   sudo journalctl -u face-recognition -f
+   ```
+
+8. After the scheduled time, refresh the dashboard and inspect the task status.
+
+Example log messages from the described implementation:
+
+```text
+[SCHEDULER] Executing task #1: It is time to take your medication.
+[VOICE] It is time to take your medication.
+[VOICE] It is time to take your medication.
+```
+
+The exact log messages depend on the installed implementation.
+
+Verify audible output directly. Logs alone cannot confirm that the user heard the reminder.
+
+### 7.7 Scheduler Troubleshooting Flowchart
+
+```text
++--------------------------------+
+| Reminder did not play          |
++---------------+----------------+
+                |
+                v
++--------------------------------+
+| Is face-recognition service    |
+| running?                      |
++---------------+----------------+
+                |
+          +-----+-----+
+          |           |
+         No          Yes
+          |           |
+          v           v
++----------------+  +-------------------------+
+| Start service  |  | Check scheduler logs     |
+| and inspect    |  +------------+------------+
+| errors         |               |
++----------------+               v
+                    +-------------------------+
+                    | Internet check failing? |
+                    +------------+------------+
+                                 |
+                           +-----+-----+
+                           |           |
+                          Yes          No
+                           |           |
+                           v           v
+                +----------------+  +-------------------------+
+                | Check network  |  | Inspect task status     |
+                | and system time|  +------------+------------+
+                +----------------+               |
+                                                 v
+                                   +---------------------------+
+                                   | Is task still PENDING?    |
+                                   +-------------+-------------+
+                                                 |
+                                           +-----+-----+
+                                           |           |
+                                          Yes          No
+                                           |           |
+                                           v           v
+                                  +----------------+  +---------------------+
+                                  | Check UTC time |  | Check Bluetooth,     |
+                                  | and worker     |  | audio logs, and task |
+                                  | execution      |  | status-update order  |
+                                  +----------------+  +---------------------+
+```
+
+### 7.8 Check Internet Connectivity
+
+Run this Python test:
+
+```bash
+python - <<'PY'
+import socket
+
+try:
+    with socket.create_connection(("8.8.8.8", 53), timeout=3):
+        print("Connection to 8.8.8.8:53 succeeded")
+except OSError as exc:
+    print(f"Connection failed: {exc}")
+PY
+```
+
+This checks the specified destination and port only. It is not a complete test of every internet connection.
+
+### 7.9 Check System Time
+
+Run:
+
+```bash
+timedatectl status
+```
+
+If appropriate, enable NTP:
+
+```bash
+sudo timedatectl set-ntp true
+```
+
+Check the status again:
+
+```bash
+timedatectl status
+```
+
+Confirm that the date, time, timezone, and synchronisation status are correct.
+
+### 7.10 Inspect Scheduled Tasks
+
+Run:
+
+```bash
+cd /home/pi/FaceRecognitionSystem2
+sqlite3 database/recognition.db \
+  "SELECT id, scheduled_time, status FROM scheduled_messages ORDER BY scheduled_time;"
+```
+
+To include the reminder text:
+
+```bash
+sqlite3 database/recognition.db \
+  "SELECT id, scheduled_time, message, status FROM scheduled_messages ORDER BY scheduled_time;"
+```
+
+The documented implementation stores the scheduled time in UTC. For example, `08:30 UTC` corresponds to `14:00 IST` on the same date.
+
+If the query fails, inspect the installed table schema:
+
+```bash
+sqlite3 database/recognition.db ".schema scheduled_messages"
+```
+
+### 7.11 Force a Controlled Scheduler Test
+
+**Warning:** This procedure changes a database record. Use only a disposable test reminder. Do not modify a real medication or safety-related reminder.
+
+First, inspect the selected task. Replace `1` with the ID of a test task:
+
+```bash
+cd /home/pi/FaceRecognitionSystem2
+sqlite3 database/recognition.db \
+  "SELECT id, scheduled_time, message, status
+   FROM scheduled_messages
+   WHERE id = 1;"
+```
+
+Confirm that the task is a test task and its status is `PENDING`.
+
+Set its scheduled time to one minute ago:
+
+```bash
+sqlite3 database/recognition.db \
+  "UPDATE scheduled_messages
+   SET scheduled_time = strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', '-1 minute')
+   WHERE id = 1
+     AND status = 'PENDING';"
+```
+
+Monitor the service logs:
+
+```bash
+sudo journalctl -u face-recognition -f
+```
+
+If the scheduler is running, connectivity is available, and audio is configured correctly, the worker should detect the due task during a subsequent check, normally within approximately 15 seconds.
+
+Verify both the resulting database status and the actual audio output.
+
+### 7.12 Check Bluetooth Audio
+
+Inspect the Bluetooth device:
+
+```bash
+bluetoothctl info <BLUETOOTH-MAC>
+```
+
+Replace `<BLUETOOTH-MAC>` with the actual device address.
+
+Inspect recent application logs:
+
+```bash
+sudo journalctl -u face-recognition -n 200 --no-pager
+```
+
+Look for Bluetooth initialisation, audio-output selection, and playback errors.
+
+### 7.13 Task Is `COMPLETED`, but No Sound Was Heard
+
+The described implementation updates the task status before sending the message to the audio queue.
+
+Consequently, `COMPLETED` may mean that the worker claimed the task rather than confirming successful playback.
+
+Check:
+
+1. Whether Bluetooth is connected.
+2. Whether the expected audio output is selected.
+3. Whether the audio queue accepted the message.
+4. Whether the service logs show playback errors.
+5. Whether the scheduler updates the task status before or after playback.
+
+Do not assume that a completed database status guarantees audible delivery.
+
+---
+
+## 8. Operational and Safety Notes
+
+- Back up the database and associated files before maintenance.
+- Use disposable test reminders when testing scheduler behaviour.
+- Keep the face-recognition service and dashboard separate where possible.
+- The locally hosted dashboard does not inherently require internet access, but the described scheduler implementation checks internet connectivity.
+- Verify the system clock before relying on scheduled reminders.
+- Test behaviour after power loss, network loss, Bluetooth disconnection, and service restart.
+- For medication reminders or other critical alerts, use a secondary alerting method and validate the complete system under realistic failure conditions.
+
+A scheduler that stores a reminder successfully is not necessarily a scheduler that guarantees delivery. The database, clock, worker, audio path, and user feedback must all be validated.
+
+
+
+````markdown
+## Finding the Bluetooth MAC Address
+
+Follow these steps to find the MAC address of a Bluetooth device using the Raspberry Pi terminal.
+
+### Step 1: Open Bluetooth Control
+
+Run the following command in the Raspberry Pi terminal:
+
+```bash
+bluetoothctl
+````
+
+### Step 2: Enable Bluetooth
+
+Enter these commands inside `bluetoothctl`:
+
+```text
+power on
+agent on
+default-agent
+```
+
+### Step 3: Scan for Bluetooth Devices
+
+Put the earbuds or headphones into pairing mode and execute:
+
+```text
+scan on
+```
+
+Wait for the device to appear. Example:
+
+```text
+[NEW] Device 0D:B0:21:9E:9D:51 Noise Buds VS102
+```
+
+The MAC address is the hexadecimal value following `Device`.
+
+### Step 4: List Discovered Devices
+
+```text
+devices
+```
+
+Example output:
+
+```text
+Device 0D:B0:21:9E:9D:51 Noise Buds VS102
+Device 12:11:67:29:5C:E2 M3
+```
+
+Identify the required device by its name and note its MAC address.
+
+### Step 5: Verify Device Information
+
+Replace the example MAC address with the address of your device:
+
+```text
+info 0D:B0:21:9E:9D:51
+```
+
+Check these fields:
+
+* `Name`: Bluetooth device name.
+* `Paired`: Whether the device has been paired.
+* `Trusted`: Whether the Raspberry Pi trusts the device.
+* `Connected`: Whether the device is currently connected.
+* `UUID: Audio Sink`: Indicates support for Bluetooth audio output.
+
+### Step 6: Stop Scanning
+
+```text
+scan off
+```
+
+### Step 7: Exit Bluetooth Control
+
+```text
+exit
+```
+
+### Step 8: Pair and Connect the Device (If Required)
+
+If the device is not already paired, put it into pairing mode and enter these commands inside `bluetoothctl`:
+
+```text
+pair DEVICE_MAC
+trust DEVICE_MAC
+connect DEVICE_MAC
+```
+
+Replace `DEVICE_MAC` with the actual MAC address.
+
+If the device is already paired and trusted but disconnected, use:
+
+```text
+connect DEVICE_MAC
+```
+
+Verify the connection:
+
+```text
+info DEVICE_MAC
+```
+
+Expected status:
+
+```text
+Paired: yes
+Trusted: yes
+Connected: yes
+```
+
+**Note:** A MAC address alone does not guarantee that an unpaired device can connect. Initial pairing may require pairing mode and additional confirmation.
+
+### Known Bluetooth Device MAC Addresses
+
+| Device Name      | MAC Address         |
+| ---------------- | ------------------- |
+| Noise Buds VS102 | `0D:B0:21:9E:9D:51` |
+| M3               | `12:11:67:29:5C:E2` |
+
+**Important:** Use the MAC address corresponding to the intended audio device when configuring `bluetooth_audio.py`.
+
+```
+```
