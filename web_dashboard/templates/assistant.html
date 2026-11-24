@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Assistant History · {{ app_name }}{% endblock %}
+
+{% block content %}
+<h1>Voice Assistant History</h1>
+<p class="updated">Showing last 100 conversations</p>
+
+{% if history %}
+<div class="chat-container" style="display: flex; flex-direction: column; gap: 1.5rem; max-width: 800px; margin: 0 auto;">
+  {% for chat in history %}
+  <div class="chat-block" style="display: flex; flex-direction: column; gap: 0.5rem;">
+    
+    <!-- User Query -->
+    <div class="chat-user" style="align-self: flex-end; background: var(--accent); color: white; padding: 0.75rem 1rem; border-radius: 12px 12px 0 12px; max-width: 80%;">
+      <small style="opacity: 0.8; display: block; margin-bottom: 0.25rem;">{{ chat.timestamp | localtime }}</small>
+      {{ chat.user_query }}
+    </div>
+
+    <!-- Assistant Response -->
+    <div class="chat-ai" style="align-self: flex-start; background: var(--panel); border: 1px solid var(--border); padding: 0.75rem 1rem; border-radius: 12px 12px 12px 0; max-width: 80%;">
+      {{ chat.assistant_response }}
+    </div>
+
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">No conversations recorded yet.</p>
+{% endif %}
+{% endblock %}

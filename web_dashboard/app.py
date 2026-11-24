@@ -400,6 +400,18 @@ def create_app(config_overrides: dict | None = None) -> Flask:
             flash(f"Could not cancel message #{msg_id}.", "error")
         return redirect(url_for("schedule"))
 
+
+    # ------------------------------------------------------ assistant
+
+    @app.route("/assistant")
+    def assistant():
+        history = queries.get_assistant_history(limit=100, db_path=db_path())
+        return render_template(
+            "assistant.html",
+            active="assistant",
+            history=history,
+        )
+
     # -------------------------------------------------- error handlers
 
     @app.errorhandler(404)

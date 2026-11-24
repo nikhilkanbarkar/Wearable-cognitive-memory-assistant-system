@@ -62,6 +62,9 @@ from recognition_logger import RecognitionLogger
 
 from person_info import PersonInfoStore
 
+# NEW: Import the Voice Assistant Controller
+from voice_assistant.controller import controller as ai_controller
+
 try:
     from oled_display import OLEDStatusDisplay
 except Exception:
@@ -420,6 +423,7 @@ def main():
     speech_thread = None
     scheduler_thread = None
     button_handler = None
+    assistant_handler = None
     recognition_logger = None
     person_store = None
 
@@ -521,13 +525,48 @@ def main():
         scheduler_thread.start()
         print("[SCHEDULER] Background task thread active.")
 
-        # Start the event-driven GPIO button handler.
+        # Start the event-driven GPIO button handler for Face Recognition (GPIO 17)
         button_handler = ButtonHandler(
             stop_event=stop_event,
             scan_requested=scan_requested,
         )
 
         button_handler.start()
+
+        # ---------------------------------------------------------
+        # NEW: Start the Voice Assistant (GPIO 27)
+        # ---------------------------------------------------------
+        assistant_requested = threading.Event()
+        
+        assistant_handler = ButtonHandler(
+            stop_event=stop_event,
+            scan_requested=assistant_requested,
+            gpio_pin=cfg.ASSISTANT_GPIO
+        )
+        assistant_handler.start()
+
+        def ai_listener():
+            while not stop_event.is_set():
+                if assistant_requested.wait(timeout=0.5):
+                    assistant_requested.clear()
+                    if stop_event.is_set():
+                        break
+                    try:
+                        ai_controller.handle_button_press()
+                    except Exception as exc:
+                        print(f"[AI] Listener error: {exc}")
+                    finally:
+                        # Reset the cooldown lock so the button works again
+                        assistant_handler.finish_scan()
+
+        ai_thread = threading.Thread(
+            target=ai_listener,
+            name="ai-listener",
+            daemon=True
+        )
+        ai_thread.start()
+        print("[AI] Voice Assistant listener active.")
+        # ---------------------------------------------------------
 
         oled_status(
             display,
@@ -539,6 +578,10 @@ def main():
         print(
             "[WIRING] BCM GPIO17 / physical pin 11 "
             "to button; other button side to GND / pin 9."
+        )
+        
+        print(
+            f"[WIRING] AI Assistant on BCM GPIO{cfg.ASSISTANT_GPIO} / physical pin 13."
         )
 
         print(
@@ -610,6 +653,9 @@ def main():
         # Release GPIO resources.
         if button_handler is not None:
             button_handler.close()
+            
+        if assistant_handler is not None:
+            assistant_handler.close()
 
         # Release camera.
         if camera is not None:

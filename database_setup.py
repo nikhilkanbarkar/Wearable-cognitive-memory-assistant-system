@@ -57,6 +57,17 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
     executed_at TEXT
 );
 
+
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    user_query TEXT NOT NULL,
+    assistant_response TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_timestamp
+    ON assistant_conversations(timestamp DESC);
+
 CREATE INDEX IF NOT EXISTS idx_events_timestamp
     ON recognition_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_events_status

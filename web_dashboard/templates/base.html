@@ -29,7 +29,8 @@
         <a href="{{ url_for('unknown_faces') }}" class="{% if active == 'unknown' %}active{% endif %}">Unknown Faces</a>
         <a href="{{ url_for('people') }}" class="{% if active == 'people' %}active{% endif %}">People</a>
         <!-- ADD THIS LINE -->
-        <a href="{{ url_for('schedule') }}" class="{% if active == 'schedule' %}active{% endif %}">Schedule</a>
+                <a href="{{ url_for('schedule') }}" class="{% if active == 'schedule' %}active{% endif %}">Schedule</a>
+        <a href="{{ url_for('assistant') }}" class="{% if active == 'assistant' %}active{% endif %}">Assistant</a>
       </nav>
     </div>
   </header>

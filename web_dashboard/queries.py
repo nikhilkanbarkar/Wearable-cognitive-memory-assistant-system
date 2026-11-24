@@ -421,3 +421,49 @@ def cancel_scheduled_message(msg_id: int, db_path: Optional[Path] = None) -> boo
         return False
     finally:
         conn.close()
+
+
+# -------------------------------------------------------- assistant
+
+def add_assistant_conversation(user_query: str, assistant_response: str, db_path: Optional[Path] = None) -> bool:
+    path = Path(db_path) if db_path else Path(wcfg.DATABASE_PATH)
+    if not path.is_file(): return False
+    conn = sqlite3.connect(str(path), timeout=wcfg.DB_BUSY_TIMEOUT_MS / 1000.0)
+    try:
+        conn.execute(
+            "INSERT INTO assistant_conversations (timestamp, user_query, assistant_response) VALUES (?, ?, ?)",
+            (datetime.now(timezone.utc).isoformat(timespec="milliseconds"), user_query, assistant_response)
+        )
+        conn.commit()
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+def get_assistant_history(limit: int = 50, db_path: Optional[Path] = None) -> list[dict]:
+    with _db(db_path) as conn:
+        if conn is None: return []
+        try:
+            rows = conn.execute(
+                "SELECT id, timestamp, user_query, assistant_response "
+                "FROM assistant_conversations ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        return [dict(r) for r in rows]
+
+def get_recent_context(limit: int = 3, db_path: Optional[Path] = None) -> list[dict]:
+    """Fetch the last N conversations for RAG context."""
+    with _db(db_path) as conn:
+        if conn is None: return []
+        try:
+            rows = conn.execute(
+                "SELECT user_query, assistant_response FROM assistant_conversations "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in reversed(rows)] # Reverse so oldest is first
+        except sqlite3.Error:
+            return []

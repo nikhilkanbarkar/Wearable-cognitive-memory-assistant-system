@@ -1,9 +1,8 @@
-
 #!/usr/bin/env python3
+"""Event-driven GPIO button handler using lgpio."""
 
 import threading
 import time
-
 import lgpio
 
 from config import (
@@ -13,13 +12,15 @@ from config import (
     BUTTON_COOLDOWN_SECONDS,
 )
 
-
 class ButtonHandler:
     """Event-driven GPIO button handler using lgpio."""
 
-    def __init__(self, stop_event, scan_requested):
+    def __init__(self, stop_event, scan_requested, gpio_pin=None):
         self.stop_event = stop_event
         self.scan_requested = scan_requested
+        
+        # Use the provided pin, or fall back to the default from config
+        self.gpio_pin = gpio_pin if gpio_pin is not None else BUTTON_GPIO
 
         self.gpio_handle = None
         self.gpio_callback = None
@@ -64,7 +65,7 @@ class ButtonHandler:
                 return
 
             try:
-                if lgpio.gpio_read(self.gpio_handle, BUTTON_GPIO) != 0:
+                if lgpio.gpio_read(self.gpio_handle, self.gpio_pin) != 0:
                     return
             except Exception as exc:
                 print(f"[BUTTON] Could not confirm press: {exc}")
@@ -97,20 +98,20 @@ class ButtonHandler:
 
             lgpio.gpio_claim_alert(
                 self.gpio_handle,
-                BUTTON_GPIO,
+                self.gpio_pin,
                 lgpio.BOTH_EDGES,
                 lgpio.SET_PULL_UP,
             )
 
             self.gpio_callback = lgpio.callback(
                 self.gpio_handle,
-                BUTTON_GPIO,
+                self.gpio_pin,
                 lgpio.BOTH_EDGES,
                 self._on_gpio_edge,
             )
 
             print(
-                f"[BUTTON] Ready on GPIO{BUTTON_GPIO}. "
+                f"[BUTTON] Ready on GPIO{self.gpio_pin}. "
                 "Press the button to start recognition."
             )
 

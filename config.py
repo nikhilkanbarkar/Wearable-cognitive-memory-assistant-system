@@ -89,3 +89,19 @@ PERSON_INFO_FILE = ROOT / "person_info.csv"
 DASHBOARD_HOST = "0.0.0.0"
 DASHBOARD_PORT = 5000
 DASHBOARD_PAGE_SIZE = 25
+
+# ------------------------------ VOICE ASSISTANT (ADDED) ------------------------------
+
+# Get your free API key from https://console.groq.com/keys
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+
+# The GPIO pin for the Assistant button (BCM numbering). 
+# We are using 27 (Physical pin 13).
+ASSISTANT_GPIO = 26
+
+# Microphone device name. If "default" doesn't work, run `arecord -l` 
+# to find your USB mic and use "plughw:1,0" for example.
+MIC_DEVICE = "plughw:CARD=UACDemoV10,DEV=0"
+
+# Maximum seconds to record if the button is not pressed again
+MAX_RECORD_SECONDS = 7
