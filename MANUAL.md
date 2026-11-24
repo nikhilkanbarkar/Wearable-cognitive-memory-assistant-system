@@ -89,6 +89,62 @@ cd /home/pi/FaceRecognitionSystem2
 
 Open the displayed address in a browser on a device connected to the same local network.
 
+### 2.4 Use the Voice Assistant
+
+The voice assistant is part of `face_recognition.py`; it does not run as a separate dashboard process. It uses a separate push button connected between **BCM GPIO26 (physical pin 37)** and GND. The face-recognition button uses BCM GPIO17.
+
+The assistant needs internet access and a valid Groq API key. The key is read from the `GROQ_API_KEY` environment variable; do not add it to `config.py`, the repository, or a command that will be saved in shell history. Revoke any previously exposed key and use a replacement.
+
+For a manually launched process, activate the virtual environment and enter the key without displaying it:
+
+```bash
+read -rsp "Groq API key: " GROQ_API_KEY
+printf '\n'
+export GROQ_API_KEY
+python face_recognition.py
+```
+
+For a systemd-managed `face-recognition` service, store the key outside the repository in a root-readable environment file:
+
+```bash
+sudo touch /etc/face-recognition.env
+sudo chown root:root /etc/face-recognition.env
+sudo chmod 600 /etc/face-recognition.env
+sudo nano /etc/face-recognition.env
+```
+
+Add this line to the file, replacing the placeholder with the new key:
+
+```text
+GROQ_API_KEY=replace_with_your_new_key
+```
+
+Then add an override for the service:
+
+```bash
+sudo systemctl edit face-recognition
+```
+
+Enter:
+
+```ini
+[Service]
+EnvironmentFile=/etc/face-recognition.env
+```
+
+Save the override, then reload and restart the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart face-recognition
+```
+
+To use the assistant, press its button to begin recording. After the button's five-second cooldown, an accepted press stops and submits the recording early; otherwise, recording ends automatically after the configured maximum of seven seconds (`MAX_RECORD_SECONDS` in `config.py`). The application sends audio to Groq Whisper for transcription, then sends the transcript and up to three recent conversation pairs to Groq for a concise chat response. The response is spoken using the existing Piper/Bluetooth audio path. The temporary recording is removed after processing.
+
+Transcripts and replies are saved in the local `assistant_conversations` SQLite table. The dashboard's **Assistant** page at `/assistant` displays up to the latest 100 saved conversations. It is a history page, not a control for starting a conversation.
+
+**Privacy:** audio is sent to Groq for transcription, and the transcript plus recent conversation context are sent to Groq for a response. Avoid speaking sensitive information you do not want processed by that service. Face recognition itself continues to run locally.
+
 ---
 
 ## 3. Database Management
@@ -349,6 +405,7 @@ The documented dashboard pages are:
 | Unknown Faces | `/unknown` | Review unknown-face records |
 | People | `/people` | View registered people |
 | Schedule | `/schedule` | Create and cancel audio reminders |
+| Assistant | `/assistant` | Review up to 100 saved voice conversations |
 
 The exact functionality available on each page depends on the installed dashboard implementation.
 
@@ -441,6 +498,21 @@ sudo timedatectl set-ntp true
 ```
 
 This enables system time synchronisation through the configured time service. It does not guarantee successful synchronisation unless a suitable time source is reachable.
+
+### 6.6 Voice Assistant Is Not Responding
+
+- Confirm the Pi has internet connectivity and `GROQ_API_KEY` is configured for the process. A key set in an interactive shell is not automatically available to a systemd service.
+- Check the recognition service logs for `[AI]` errors:
+
+  ```bash
+  sudo journalctl -u face-recognition -n 100 --no-pager
+  ```
+
+- Check the microphone is visible with `arecord -l`. If needed, update `MIC_DEVICE` in `config.py` to the correct ALSA device name.
+- Check the configured Bluetooth audio output using the steps in **6.3 Bluetooth Audio Is Not Working**.
+- If the conversation was processed but is not visible in the dashboard, verify the dashboard is reading the same `database/recognition.db` used by the recognition process.
+
+Do not paste API keys into logs, issue reports, or chat messages.
 
 ---
 

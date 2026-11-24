@@ -1,10 +1,10 @@
 # 🧠 Cognitive Assist — Offline Face Recognition with Local Dashboard
 
-> A Raspberry Pi wearable that recognises faces entirely offline, speaks
-> the result aloud, and logs every attempt to a local database that you
+> A Raspberry Pi wearable that recognises faces locally, speaks the
+> result aloud, and logs every attempt to a local database that you
 > can browse from any phone or laptop on the same WiFi.
 
-**No cloud. No internet. No external API. Everything runs on the Pi.**
+**Face recognition runs on the Pi without cloud services. The optional voice assistant uses the Groq API and requires internet access.**
 
 ---
 
@@ -14,6 +14,7 @@
 - 🎥 **Camera captures** a short burst of frames and picks the best face.
 - 🧬 **ArcFace** generates a 512-dimensional embedding and compares it against your pre-registered database (30 people, 470 embeddings).
 - 🗣️ **Bluetooth earbuds** announce the result (known name or "I do not recognise this person").
+- 🎙️ **Optional voice assistant** records speech from a separate button and uses Groq for transcription and chat; replies are spoken through the configured Bluetooth audio output.
 - 🖥️ **OLED display** shows status + last result.
 - 💾 **SQLite database** records every event — known, unknown, no-face, or error.
 - 🌐 **Web dashboard** (optional, starts at boot) lets a caregiver review everything from a phone on the same WiFi.
@@ -220,6 +221,28 @@ Password: choose-a-strong-one
 Dashboard: http://10.42.0.1:5000
 ```
 
+---
+
+## 🎙️ Optional voice assistant
+
+The assistant runs as part of `face_recognition.py` and uses a separate push button from face recognition:
+
+- Connect the assistant button between **BCM GPIO26 (physical pin 37)** and GND. Face recognition uses BCM GPIO17.
+- Set a valid `GROQ_API_KEY` environment variable. For a manually launched process, enter the key without echoing it:
+
+  ```bash
+  read -rsp "Groq API key: " GROQ_API_KEY
+  printf '\n'
+  export GROQ_API_KEY
+  python face_recognition.py
+  ```
+
+  If the app runs as a systemd service, configure the variable for the `face-recognition` service; an interactive shell variable is not inherited by systemd. See [`MANUAL.md`](MANUAL.md) for a secure `EnvironmentFile` setup. Do not put the key in `config.py` or commit it.
+- Press the assistant button to record. After the button's five-second cooldown, an accepted press stops and submits early; otherwise recording stops automatically after the configured seven-second maximum (`MAX_RECORD_SECONDS` in `config.py`).
+- The recording is sent to Groq Whisper for transcription. The transcript and up to the three latest conversation pairs are sent to Groq for a concise response. The reply is spoken using the existing Piper/Bluetooth audio path.
+- The transcript and reply are saved in the local SQLite `assistant_conversations` table. Open **Assistant** or `/assistant` in the dashboard to review up to the latest 100 conversations.
+
+The assistant requires internet connectivity and a valid Groq key. Voice recordings and conversation context are sent to Groq; do not speak sensitive information you do not want processed by that service. Local face recognition remains offline.
 
 ---
 
@@ -251,6 +274,10 @@ FaceRecognitionSystem2/
 │
 ├── 🔴 face_recognition.py          ← main service (button → recognition → log)
 ├── 🔴 config.py                    ← all paths and thresholds
+├── 🟢 voice_assistant/             ← GPIO-triggered Groq voice assistant
+│   ├── controller.py               ← recording, transcription/chat, and playback flow
+│   ├── recorder.py                  ← temporary microphone recording
+│   └── groq_client.py               ← Groq Whisper and chat API requests
 ├── 🔴 face_camera.py               ← camera + ArcFace setup
 ├── 🔴 face_database.py             ← loads embeddings + matching logic
 ├── 🔴 button_handler.py            ← GPIO with debounce + cooldown
@@ -268,7 +295,7 @@ FaceRecognitionSystem2/
 │   ├── config.py                   ← paths (self-contained, no cv2 import)
 │   ├── app.py                      ← Flask app + routes
 │   ├── queries.py                  ← all SQL queries
-│   ├── templates/                  ← 8 HTML templates
+│   ├── templates/                  ← dashboard pages, including assistant history
 │   └── static/                     ← CSS + JS
 │
 ├── 💾 database/
