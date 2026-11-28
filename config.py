@@ -93,7 +93,14 @@ DASHBOARD_PAGE_SIZE = 25
 # ------------------------------ VOICE ASSISTANT (ADDED) ------------------------------
 
 # Get your free API key from https://console.groq.com/keys
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+try:
+    from local_secrets import GROQ_API_KEY as LOCAL_GROQ_API_KEY
+except ModuleNotFoundError as error:
+    if error.name != "local_secrets":
+        raise
+    LOCAL_GROQ_API_KEY = ""
+
+GROQ_API_KEY = LOCAL_GROQ_API_KEY or os.environ.get("GROQ_API_KEY", "")
 
 # The GPIO pin for the Assistant button (BCM numbering). 
 # We are using 27 (Physical pin 13).

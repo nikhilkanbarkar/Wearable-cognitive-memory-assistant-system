@@ -131,6 +131,9 @@ def capture_best_face(camera, yunet):
     checked = 0
     detection_runs = 0
 
+    # YuNet only needs setInputSize() when the frame size changes.
+    input_size = None
+
     deadline = time.monotonic() + CAPTURE_SECONDS
 
     while time.monotonic() < deadline:
@@ -148,7 +151,9 @@ def capture_best_face(camera, yunet):
 
         height, width = frame.shape[:2]
 
-        yunet.setInputSize((width, height))
+        if input_size != (width, height):
+            input_size = (width, height)
+            yunet.setInputSize(input_size)
 
         _, detections = yunet.detect(frame)
 
@@ -199,9 +204,12 @@ def capture_best_face(camera, yunet):
                     .copy()
                 )
 
+                # camera.read() allocates a fresh array for every call, so
+                # the frame is never overwritten by later reads and does not
+                # need to be copied.
                 best = (
                     quality,
-                    frame.copy(),
+                    frame,
                     landmarks,
                     detector_score,
                 )

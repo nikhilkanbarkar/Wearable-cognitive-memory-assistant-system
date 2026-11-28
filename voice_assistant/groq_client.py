@@ -6,6 +6,10 @@ from config import DATABASE_PATH, GROQ_API_KEY
 WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+# One shared session keeps the TLS connection to api.groq.com alive between
+# the speech-to-text call and the chat call (saves a handshake per query).
+_session = requests.Session()
+
 def transcribe_audio(file_path):
     """Sends WAV to Groq Whisper Turbo for STT."""
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
@@ -13,7 +17,7 @@ def transcribe_audio(file_path):
         with open(file_path, "rb") as f:
             files = {"file": (os.path.basename(file_path), f, "audio/wav")}
             data = {"model": "whisper-large-v3-turbo", "response_format": "json"}
-            resp = requests.post(WHISPER_URL, headers=headers, files=files, data=data, timeout=15)
+            resp = _session.post(WHISPER_URL, headers=headers, files=files, data=data, timeout=15)
         
         if resp.status_code == 200:
             return resp.json().get("text", "").strip()
@@ -51,7 +55,7 @@ def generate_response(user_text):
     }
     
     try:
-        resp = requests.post(CHAT_URL, headers=headers, json=payload, timeout=10)
+        resp = _session.post(CHAT_URL, headers=headers, json=payload, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             choice = data["choices"][0]

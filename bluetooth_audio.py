@@ -17,6 +17,7 @@ Features:
 import os
 import time
 import wave
+from collections import OrderedDict
 import shutil
 import tempfile
 import subprocess
@@ -56,6 +57,15 @@ _piper_voice_initialized = False
 
 _current_sink = None
 _active_device = None
+
+# Small in-memory cache of synthesized WAV data keyed by text. Announcements
+# such as "I do not recognize this person" and the scheduler's play-twice
+# messages repeat often, and Piper synthesis is the slowest step on the Pi.
+# The voice model is fixed for the process lifetime, so cached audio never
+# goes stale. Accessed only while holding _tts_lock.
+_TTS_CACHE_MAX_ENTRIES = 8
+_TTS_CACHE_MAX_BYTES = 1024 * 1024
+_tts_cache = OrderedDict()
 
 # ============================================================
 # COMMAND EXECUTION
@@ -131,20 +141,25 @@ def _get_audio_sinks():
 def _mac_to_sink_fragment(mac):
     return mac.replace(":", "_").upper()
 
-def _find_sink_for_device(mac):
-    sinks = _get_audio_sinks()
+def _match_sink(sinks, mac):
+    """Return the sink in an already-fetched list that belongs to mac."""
     fragment = _mac_to_sink_fragment(mac)
     for sink in sinks:
         if fragment in sink.upper():
             return sink
     return None
 
+def _find_sink_for_device(mac):
+    return _match_sink(_get_audio_sinks(), mac)
+
 def _select_bluetooth_sink():
     global _current_sink
 
     # If primary is connected, we must use it. Otherwise, try secondary.
-    primary_sink = _find_sink_for_device(PRIMARY_MAC)
-    secondary_sink = _find_sink_for_device(SECONDARY_MAC)
+    # One pactl call serves both lookups.
+    sinks = _get_audio_sinks()
+    primary_sink = _match_sink(sinks, PRIMARY_MAC)
+    secondary_sink = _match_sink(sinks, SECONDARY_MAC)
 
     sink = primary_sink if primary_sink else secondary_sink
 
@@ -170,9 +185,10 @@ def _monitor_loop():
     
     while not _monitor_stop_event.is_set():
         try:
-            # 1. Check what sinks are currently available (fast pactl call)
-            primary_sink = _find_sink_for_device(PRIMARY_MAC)
-            secondary_sink = _find_sink_for_device(SECONDARY_MAC)
+            # 1. Check what sinks are currently available (one pactl call)
+            sinks = _get_audio_sinks()
+            primary_sink = _match_sink(sinks, PRIMARY_MAC)
+            secondary_sink = _match_sink(sinks, SECONDARY_MAC)
 
             if primary_sink:
                 if _active_device != PRIMARY_MAC or _current_sink != primary_sink:
@@ -286,6 +302,30 @@ def _synthesize_with_cli(text, output_path):
 # SPEECH PLAYBACK
 # ============================================================
 
+def _write_cached_wav(text, output_path):
+    """Write cached WAV data for text to output_path. True on a cache hit."""
+    data = _tts_cache.get(text)
+    if data is None:
+        return False
+    try:
+        output_path.write_bytes(data)
+    except OSError:
+        return False
+    _tts_cache.move_to_end(text)
+    return True
+
+def _store_cached_wav(text, output_path):
+    try:
+        size = output_path.stat().st_size
+        if size > _TTS_CACHE_MAX_BYTES:
+            return
+        _tts_cache[text] = output_path.read_bytes()
+        _tts_cache.move_to_end(text)
+        while len(_tts_cache) > _TTS_CACHE_MAX_ENTRIES:
+            _tts_cache.popitem(last=False)
+    except OSError:
+        pass
+
 def speak(text):
     if not text:
         return False
@@ -308,10 +348,16 @@ def speak(text):
                 output_path = Path(temp_file.name)
 
             try:
-                # Try Python API first, then CLI
-                synthesized = _synthesize_with_python(text, output_path)
+                synthesized = _write_cached_wav(text, output_path)
+
                 if not synthesized:
-                    synthesized = _synthesize_with_cli(text, output_path)
+                    # Try Python API first, then CLI
+                    synthesized = _synthesize_with_python(text, output_path)
+                    if not synthesized:
+                        synthesized = _synthesize_with_cli(text, output_path)
+
+                    if synthesized:
+                        _store_cached_wav(text, output_path)
 
                 if not synthesized:
                     print("[AUDIO] Synthesis failed.")

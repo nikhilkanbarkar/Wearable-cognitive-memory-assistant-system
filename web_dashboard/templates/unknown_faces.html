@@ -2,8 +2,10 @@
 {% block title %}Unknown Faces · {{ app_name }}{% endblock %}
 
 {% block content %}
-<h1>Unknown Faces</h1>
-<p class="updated">{{ total }} recorded · page {{ page }} of {{ total_pages }}</p>
+<div class="page-head">
+  <h1>Unknown Faces</h1>
+  <p class="updated">{{ total }} recorded · page {{ page }} of {{ total_pages }}</p>
+</div>
 
 <form method="get" action="{{ url_for('unknown_faces') }}" class="filters filters-inline">
   <div class="filter-field">
@@ -24,7 +26,7 @@
 {% if events %}
 <div class="gallery">
   {% for e in events %}
-  <a class="gallery-item" href="{{ url_for('unknown_detail', event_id=e.id) }}">
+  <a class="gallery-item" data-tilt href="{{ url_for('unknown_detail', event_id=e.id) }}">
     <img src="{{ url_for('unknown_image', event_id=e.id) }}"
          alt="Unknown face #{{ e.id }}" loading="lazy" width="112" height="112">
     <div class="gallery-meta">
@@ -53,6 +55,6 @@
   {% endif %}
 </nav>
 {% else %}
-<p class="empty">No unknown faces recorded yet.</p>
+<p class="empty"><span class="empty-glyph" aria-hidden="true">✦</span>No unknown faces recorded yet.</p>
 {% endif %}
 {% endblock %}

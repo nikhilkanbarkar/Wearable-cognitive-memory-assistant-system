@@ -13,12 +13,16 @@ class AssistantController:
     def __init__(self):
         self.state = "IDLE"  # IDLE, RECORDING, PROCESSING, SPEAKING
         self.recorder = AudioRecorder(device=MIC_DEVICE, max_seconds=MAX_RECORD_SECONDS)
-        self.lock = threading.Lock()
+        # Re-entrant: _speak() updates the state and is called both with and
+        # without the lock held.
+        self.lock = threading.RLock()
+        self.timer = None
 
     def check_internet(self):
         try:
-            socket.create_connection(("8.8.8.8", 53), timeout=2)
-            return True
+            # Close the probe socket explicitly instead of waiting for GC.
+            with socket.create_connection(("8.8.8.8", 53), timeout=2):
+                return True
         except OSError:
             return False
 
@@ -44,14 +48,22 @@ class AssistantController:
         self.audio_path = self.recorder.start_recording()
         
         # Start a timer to auto-stop after MAX_RECORD_SECONDS
-        self.timer = threading.Timer(MAX_RECORD_SECONDS + 1, self._stop_recording_and_process)
+        self.timer = threading.Timer(MAX_RECORD_SECONDS + 1, self._on_record_timeout)
+        self.timer.daemon = True
         self.timer.start()
+
+    def _on_record_timeout(self):
+        # The timer fires on its own thread; take the same lock as the button
+        # path so both cannot stop the recording at the same time.
+        with self.lock:
+            self._stop_recording_and_process()
 
     def _stop_recording_and_process(self):
         if self.state != "RECORDING":
             return
         
-        self.timer.cancel()
+        if self.timer is not None:
+            self.timer.cancel()
         self.recorder.stop_recording()
         self.state = "PROCESSING"
         print("[AI] Processing audio...")
@@ -87,7 +99,8 @@ class AssistantController:
                 os.remove(self.audio_path)
 
     def _speak(self, text):
-        self.state = "SPEAKING"
+        with self.lock:
+            self.state = "SPEAKING"
         
         def play():
             speak_text(text)
@@ -103,7 +116,8 @@ class AssistantController:
         print("[AI] Interrupting speech.")
         # Kill the paplay process instantly
         subprocess.run(["pkill", "-f", "paplay"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.state = "IDLE"
+        with self.lock:
+            self.state = "IDLE"
 
 # Singleton instance
 controller = AssistantController()

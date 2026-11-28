@@ -228,16 +228,13 @@ Dashboard: http://10.42.0.1:5000
 The assistant runs as part of `face_recognition.py` and uses a separate push button from face recognition:
 
 - Connect the assistant button between **BCM GPIO26 (physical pin 37)** and GND. Face recognition uses BCM GPIO17.
-- Set a valid `GROQ_API_KEY` environment variable. For a manually launched process, enter the key without echoing it:
+- Copy `local_secrets.example.py` to `local_secrets.py` and set `GROQ_API_KEY` in that file. `local_secrets.py` is excluded by `.gitignore` and must never be committed. The key can also be supplied via the `GROQ_API_KEY` environment variable as a fallback.
 
   ```bash
-  read -rsp "Groq API key: " GROQ_API_KEY
-  printf '\n'
-  export GROQ_API_KEY
+  cp local_secrets.example.py local_secrets.py
+  # Edit local_secrets.py and set your key, then:
   python face_recognition.py
   ```
-
-  If the app runs as a systemd service, configure the variable for the `face-recognition` service; an interactive shell variable is not inherited by systemd. See [`MANUAL.md`](MANUAL.md) for a secure `EnvironmentFile` setup. Do not put the key in `config.py` or commit it.
 - Press the assistant button to record. After the button's five-second cooldown, an accepted press stops and submits early; otherwise recording stops automatically after the configured seven-second maximum (`MAX_RECORD_SECONDS` in `config.py`).
 - The recording is sent to Groq Whisper for transcription. The transcript and up to the three latest conversation pairs are sent to Groq for a concise response. The reply is spoken using the existing Piper/Bluetooth audio path.
 - The transcript and reply are saved in the local SQLite `assistant_conversations` table. Open **Assistant** or `/assistant` in the dashboard to review up to the latest 100 conversations.

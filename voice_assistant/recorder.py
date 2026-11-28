@@ -9,6 +9,7 @@ class AudioRecorder:
         self.device = device
         self.max_seconds = max_seconds
         self.recording = False
+        self.process = None
 
     def start_recording(self):
         """Starts recording in the background and returns the file path."""
@@ -26,7 +27,12 @@ class AudioRecorder:
 
     def stop_recording(self):
         """Stops the recording early if the button is pressed again."""
-        if self.recording and hasattr(self, "process"):
+        if self.recording and self.process is not None:
             self.process.terminate()
-            self.process.wait()
+            try:
+                self.process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                # arecord ignored SIGTERM; do not block the button handler.
+                self.process.kill()
+                self.process.wait()
             self.recording = False

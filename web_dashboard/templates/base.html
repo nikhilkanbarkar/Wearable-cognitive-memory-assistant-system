@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f4f7fd">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='none' stroke='%237c3aed' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%232563eb'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
@@ -14,8 +17,8 @@
         <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
           <defs>
             <linearGradient id="brand-grad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#4e9bff"/>
-              <stop offset="1" stop-color="#a06cff"/>
+              <stop offset="0" stop-color="#3b82f6"/>
+              <stop offset="1" stop-color="#8b5cf6"/>
             </linearGradient>
           </defs>
           <circle cx="16" cy="16" r="14" fill="none" stroke="url(#brand-grad)" stroke-width="2"/>
@@ -23,14 +26,13 @@
         </svg>
         <span>{{ app_name }}</span>
       </a>
-      <nav>
-        <a href="{{ url_for('dashboard') }}" class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>
-        <a href="{{ url_for('history') }}" class="{% if active == 'history' %}active{% endif %}">History</a>
-        <a href="{{ url_for('unknown_faces') }}" class="{% if active == 'unknown' %}active{% endif %}">Unknown Faces</a>
-        <a href="{{ url_for('people') }}" class="{% if active == 'people' %}active{% endif %}">People</a>
-        <!-- ADD THIS LINE -->
-                <a href="{{ url_for('schedule') }}" class="{% if active == 'schedule' %}active{% endif %}">Schedule</a>
-        <a href="{{ url_for('assistant') }}" class="{% if active == 'assistant' %}active{% endif %}">Assistant</a>
+      <nav aria-label="Main">
+        <a href="{{ url_for('dashboard') }}" class="{% if active == 'dashboard' %}active{% endif %}"{% if active == 'dashboard' %} aria-current="page"{% endif %}>Dashboard</a>
+        <a href="{{ url_for('history') }}" class="{% if active == 'history' %}active{% endif %}"{% if active == 'history' %} aria-current="page"{% endif %}>History</a>
+        <a href="{{ url_for('unknown_faces') }}" class="{% if active == 'unknown' %}active{% endif %}"{% if active == 'unknown' %} aria-current="page"{% endif %}>Unknown Faces</a>
+        <a href="{{ url_for('people') }}" class="{% if active == 'people' %}active{% endif %}"{% if active == 'people' %} aria-current="page"{% endif %}>People</a>
+        <a href="{{ url_for('schedule') }}" class="{% if active == 'schedule' %}active{% endif %}"{% if active == 'schedule' %} aria-current="page"{% endif %}>Schedule</a>
+        <a href="{{ url_for('assistant') }}" class="{% if active == 'assistant' %}active{% endif %}"{% if active == 'assistant' %} aria-current="page"{% endif %}>Assistant</a>
       </nav>
     </div>
   </header>
@@ -39,7 +41,7 @@
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
-          <div class="flash flash-{{ category|slug }}">{{ message }}</div>
+          <div class="flash flash-{{ category|slug }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>
         {% endfor %}
       {% endif %}
     {% endwith %}
@@ -51,6 +53,7 @@
     <p>Offline-first · Local network only · No cloud services</p>
   </footer>
 
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

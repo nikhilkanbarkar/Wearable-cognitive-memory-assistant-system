@@ -93,7 +93,22 @@ Open the displayed address in a browser on a device connected to the same local 
 
 The voice assistant is part of `face_recognition.py`; it does not run as a separate dashboard process. It uses a separate push button connected between **BCM GPIO26 (physical pin 37)** and GND. The face-recognition button uses BCM GPIO17.
 
-The assistant needs internet access and a valid Groq API key. The key is read from the `GROQ_API_KEY` environment variable; do not add it to `config.py`, the repository, or a command that will be saved in shell history. Revoke any previously exposed key and use a replacement.
+The assistant needs internet access and a valid Groq API key. Configure it either in the ignored `local_secrets.py` file or through the `GROQ_API_KEY` environment variable; do not add it to `config.py`, the repository, or a command that will be saved in shell history. Revoke any previously exposed key and use a replacement.
+
+For a local setup, copy the example file and set the key once:
+
+```bash
+cp local_secrets.example.py local_secrets.py
+nano local_secrets.py
+```
+
+Set `GROQ_API_KEY` inside that file, for example:
+
+```python
+GROQ_API_KEY = "your_new_groq_key"
+```
+
+`local_secrets.py` is excluded by `.gitignore`. The environment variable is used as a fallback when the local file is absent or the file value is empty.
 
 For a manually launched process, activate the virtual environment and enter the key without displaying it:
 

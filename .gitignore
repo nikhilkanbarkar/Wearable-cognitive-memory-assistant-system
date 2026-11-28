@@ -15,6 +15,7 @@ oled_env/
 .env
 .env.*
 !.env.example
+local_secrets.py
 *.local
 
 # Runtime data and personal/biometric information

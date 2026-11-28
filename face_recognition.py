@@ -133,6 +133,16 @@ def announce(message):
 
 # -------------------------- SCHEDULER --------------------------------
 
+def _internet_available():
+    """Return True when the clock-sync connectivity probe succeeds."""
+    try:
+        # Close the probe socket explicitly instead of waiting for GC.
+        with socket.create_connection(("8.8.8.8", 53), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
 def scheduler_worker():
     """Background thread that checks for scheduled messages in the DB."""
     db_path = cfg.DATABASE_PATH
@@ -143,15 +153,9 @@ def scheduler_worker():
         if stop_event.wait(15):
             break
 
-        # Verify internet connection to ensure system clock is synced
-        try:
-            socket.create_connection(("8.8.8.8", 53), timeout=2)
-        except OSError:
-            print("[SCHEDULER] No internet connection. Waiting to sync time before executing tasks...")
-            continue
-
         now_utc = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
+        conn = None
         try:
             conn = sqlite3.connect(str(db_path), timeout=timeout)
             conn.row_factory = sqlite3.Row
@@ -165,6 +169,15 @@ def scheduler_worker():
                 (now_utc,)
             ).fetchall()
 
+            if not rows:
+                # Nothing is due: skip the network probe entirely.
+                continue
+
+            # Verify internet connection to ensure system clock is synced
+            if not _internet_available():
+                print("[SCHEDULER] No internet connection. Waiting to sync time before executing tasks...")
+                continue
+
             for row in rows:
                 # Atomically claim the task so it doesn't double-play
                 cur = conn.execute(
@@ -177,16 +190,22 @@ def scheduler_worker():
                 if cur.rowcount > 0:
                     msg = row["message"]
                     print(f"[SCHEDULER] Executing task #{row['id']}: {msg}")
-                    
+
                     # Play the message twice
                     announce(msg)
-                    time.sleep(2)  # 2-second pause between plays
+                    stop_event.wait(2)  # 2-second pause between plays
                     announce(msg)
-
-            conn.close()
 
         except Exception as exc:
             print(f"[SCHEDULER] Error checking schedule: {exc}")
+
+        finally:
+            # Always release the connection, including on errors.
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 # ----------------------------- OLED ----------------------------------

@@ -2,8 +2,10 @@
 {% block title %}Unknown Face #{{ event.id }} · {{ app_name }}{% endblock %}
 
 {% block content %}
-<p><a href="{{ url_for('unknown_faces') }}">← Back to unknown faces</a></p>
-<h1>Unknown Face #{{ event.id }}</h1>
+<a class="back-link" href="{{ url_for('unknown_faces') }}">← Back to unknown faces</a>
+<div class="page-head">
+  <h1>Unknown Face #{{ event.id }}</h1>
+</div>
 
 <div class="detail">
   <div class="detail-image-wrap">

@@ -61,7 +61,7 @@
     <span class="bar-label">Known</span>
     <div class="bar-track">
       <div class="bar-fill bar-fill-known"
-           style="width: {{ (stats.known / ku_total * 100) if ku_total else 0 }}%"></div>
+           data-bar-width="{{ (stats.known / ku_total * 100) if ku_total else 0 }}"></div>
     </div>
     <span class="bar-num">{{ stats.known }}</span>
   </div>
@@ -69,7 +69,7 @@
     <span class="bar-label">Unknown</span>
     <div class="bar-track">
       <div class="bar-fill bar-fill-unknown"
-           style="width: {{ (stats.unknown / ku_total * 100) if ku_total else 0 }}%"></div>
+           data-bar-width="{{ (stats.unknown / ku_total * 100) if ku_total else 0 }}"></div>
     </div>
     <span class="bar-num">{{ stats.unknown }}</span>
   </div>
